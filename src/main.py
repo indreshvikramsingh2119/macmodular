@@ -39,26 +39,22 @@ def save_users(users):
 class LoginRegisterDialog(QDialog):
     def __init__(self):
         super().__init__()
+        
+        # Set responsive size policy
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumSize(800, 600)  # Minimum size for usability
+        
+        # Set window properties for better responsiveness
         self.setWindowTitle("CardioX by Deckmount - Sign In / Sign Up")
-        self.setMinimumSize(800, 500)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowMinMaxButtonsHint)
-        self.setStyleSheet("""
-            QDialog { background: #fafbfc; border-radius: 18px; }
-            QLabel#AppTitle { color: #2453ff; font-size: 26px; font-weight: bold; }
-            QLabel#Headline { color: #2453ff; font-size: 22px; font-weight: bold; }
-            QLabel#Welcome { color: #222; font-size: 13px; }
-            QLineEdit { border: 1.5px solid #2453ff; border-radius: 4px; padding: 8px 12px; font-size: 15px; background: #fff; }
-            QPushButton#LoginBtn { background: #2453ff; color: white; border-radius: 4px; padding: 8px 0; font-size: 16px; font-weight: bold; }
-            QPushButton#LoginBtn:hover { background: #1a3bb3; }
-            QPushButton#SignUpBtn { background: #fff; color: #2453ff; border: 1.5px solid #2453ff; border-radius: 4px; padding: 8px 0; font-size: 16px; font-weight: bold; }
-            QPushButton#SignUpBtn:hover { background: #eaf0ff; }
-            QCheckBox { font-size: 13px; }
-            QLabel#Social { color: #2453ff; font-size: 13px; font-weight: bold; }
-            QPushButton#SocialBtn { background: none; color: #2453ff; border: none; font-size: 13px; text-decoration: underline; }
-            QPushButton#SocialBtn:hover { color: #1a3bb3; }
-        """)
+        self.setWindowFlags(Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint)
+        
+        # Initialize sign-in logic
         from auth.sign_in import SignIn
         self.sign_in_logic = SignIn()
+        
+        # Center the window on screen
+        self.center_on_screen()
+        
         self.init_ui()
         self.result = False
         self.username = None
@@ -88,14 +84,13 @@ class LoginRegisterDialog(QDialog):
         main_layout.addStretch(1)
         # Title (outside glass) - logo style
         title = QLabel("CardioX by Deckmount")
-        title.setFont(QFont("Segoe Script, Pacifico, Segoe UI", 52, QFont.Black))
+        title.setFont(QFont("Arial", 52, QFont.Black))
         title.setStyleSheet("""
             color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ff6600, stop:1 #ffb347);
             letter-spacing: 4px;
             margin-bottom: 0px;        
             padding-top: 0px;
             padding-bottom: 0px;
-            text-shadow: 0 4px 24px #ff660088, 0 1px 0 #fff, 0 0px 2px #ff6600;
             font-weight: 900;
             border-radius: 18px;
         """)
@@ -103,8 +98,8 @@ class LoginRegisterDialog(QDialog):
         main_layout.addWidget(title)
         # Tagline (outside glass)
         tagline = QLabel("Built to Detect. Designed to Last.")
-        tagline.setFont(QFont("Segoe UI", 18, QFont.Bold))
-        tagline.setStyleSheet("color: #ff6600; margin-bottom: 18px; margin-top: 0px; text-shadow: 0 2px 12px #fff2;")
+        tagline.setFont(QFont("Arial", 18, QFont.Bold))
+        tagline.setStyleSheet("color: #ff6600; margin-bottom: 18px; margin-top: 0px; background: rgba(255,255,255,0.1);")
         tagline.setAlignment(Qt.AlignHCenter)
         main_layout.addWidget(tagline)
         # --- Glass effect container in center ---
@@ -130,12 +125,12 @@ class LoginRegisterDialog(QDialog):
         glass_layout.setContentsMargins(32, 32, 32, 32)
         # ECG image inside glass, left side (larger)
         ecg_img = QLabel()
-        ecg_pix = QPixmap(os.path.abspath(os.path.join(os.path.dirname(__file__), '../assets/v1.png')))
+        ecg_pix = QPixmap(resource_path('assets/v1.png'))
         if not ecg_pix.isNull():
             ecg_img.setPixmap(ecg_pix.scaled(400, 600, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             ecg_img.setAlignment(Qt.AlignVCenter | Qt.AlignHCenter)
             ecg_img.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            ecg_img.setStyleSheet("margin: 0px 32px 0px 0px; border-radius: 24px; box-shadow: 0 0 32px #ff6600; background: transparent;")
+            ecg_img.setStyleSheet("margin: 0px 32px 0px 0px; border-radius: 24px; background: transparent;")
         # Wrap image in a layout to center vertically
         img_col = QVBoxLayout()
         img_col.addStretch(1)
@@ -273,7 +268,7 @@ class LoginRegisterDialog(QDialog):
         register_btn = QPushButton("Sign Up")
         register_btn.setObjectName("SignUpBtn")
         register_btn.clicked.connect(self.handle_register)
-        for w in [self.reg_name, self.reg_age, self.reg_gender, self.reg_address, self.reg_phone, self.reg_password, self.reg_confirm, register_btn]:
+        for w in [self.reg_name, self.reg_age, self.reg_gender, self.reg_address, self.reg_phone, self.reg_password, self.reg_confirm]:
             w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         # Apply dashboard color coding
         for w in [self.reg_name, self.reg_age, self.reg_gender, self.reg_address, self.reg_phone, self.reg_password, self.reg_confirm]:

@@ -235,12 +235,15 @@ class ECGTestPage(QWidget):
         "V5": "#00b894",
         "V6": "#ff0066"
     }
+    
     def __init__(self, test_name, stacked_widget):
         super().__init__()
+        
+        # Set responsive size policy
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumSize(800, 600)  # Minimum size for usability
+        
         self.setWindowTitle("12-Lead ECG Monitor")
-        self.setGeometry(100, 100, 1200, 800)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
-        self.center_on_screen()
         self.stacked_widget = stacked_widget  # Save reference for navigation
 
         self.settings_manager = SettingsManager()
@@ -291,9 +294,11 @@ class ECGTestPage(QWidget):
             }
         """)
 
-        # Enhanced Menu Panel
+        # Enhanced Menu Panel - Make it responsive and compact
         menu_container = QWidget()
-        menu_container.setFixedWidth(300)
+        menu_container.setMinimumWidth(200)  # Reduced from 250px
+        menu_container.setMaximumWidth(280)  # Reduced from 400px
+        menu_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         menu_container.setStyleSheet("""
             QWidget {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
@@ -302,27 +307,28 @@ class ECGTestPage(QWidget):
             }
         """)
 
-        # Style menu buttons
+        # Style menu buttons - Make them much more compact
         menu_layout = QVBoxLayout(menu_container)
-        menu_layout.setContentsMargins(20, 20, 20, 20)
-        menu_layout.setSpacing(12)
+        menu_layout.setContentsMargins(12, 12, 12, 12)  # Reduced margins
+        menu_layout.setSpacing(8)  # Reduced spacing between buttons
         
-        # Header
+        # Header - Make it more compact
         header_label = QLabel("ECG Control Panel")
         header_label.setStyleSheet("""
             QLabel {
                 color: #ff6600;
-                font-size: 24px;
+                font-size: 18px;  /* Reduced from 24px */
                 font-weight: bold;
-                padding: 20px 0;
-                border-bottom: 3px solid #ff6600;
-                margin-bottom: 20px;
+                padding: 12px 0;  /* Reduced from 20px */
+                border-bottom: 2px solid #ff6600;  /* Reduced from 3px */
+                margin-bottom: 12px;  /* Reduced from 20px */
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                     stop:0 #fff5f0, stop:1 #ffe0cc);
-                border-radius: 10px;
+                border-radius: 8px;  /* Reduced from 10px */
             }
         """)
         header_label.setAlignment(Qt.AlignCenter)
+        header_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         menu_layout.addWidget(header_label)
 
         # Create ECGMenu instance to use its methods
@@ -344,59 +350,59 @@ class ECGTestPage(QWidget):
 
         self.apply_display_settings()
 
-    
-        menu_buttons = [
+        # Create ECG menu buttons
+        ecg_menu_buttons = [
             ("Save ECG", self.ecg_menu.show_save_ecg, "#28a745"),
-            ("Open ECG", self.ecg_menu.open_ecg_window, "#17a2b8"),
-            ("Working Mode", self.ecg_menu.show_working_mode, "#6f42c1"),
-            ("Printer Setup", self.ecg_menu.show_printer_setup, "#fd7e14"),
-            ("Set Filter", self.ecg_menu.set_filter_setup, "#20c997"),
-            ("System Setup", self.ecg_menu.show_system_setup, "#6c757d"),
-            ("Load Default", self.ecg_menu.show_load_default, "#ffc107"),
-            ("Version", self.ecg_menu.show_version_info, "#17a2b8"),
+            ("Open ECG", self.ecg_menu.show_open_ecg, "#17a2b8"),
+            ("Working Mode", self.ecg_menu.show_working_mode, "#ffc107"),
+            ("Printer Setup", self.ecg_menu.show_printer_setup, "#6c757d"),
+            ("Set Filter", self.ecg_menu.show_set_filter, "#fd7e14"),
+            ("System Setup", self.ecg_menu.show_system_setup, "#6f42c1"),
+            ("Load Default", self.ecg_menu.show_load_default, "#20c997"),
+            ("Version", self.ecg_menu.show_version_info, "#e83e8c"),
             ("Factory Maintain", self.ecg_menu.show_factory_maintain, "#dc3545"),
-            ("Exit", self.ecg_menu.show_exit, "#6c757d"),
+            ("Exit", self.ecg_menu.show_exit, "#495057")
         ]
         
-        # Create buttons and store them in a list
+        # Create buttons and store them in a list - Make them much smaller
         created_buttons = []
-        for text, handler, color in menu_buttons:
+        for text, handler, color in ecg_menu_buttons:
             btn = QPushButton(text)
-            btn.setFixedHeight(77)
+            btn.setMinimumHeight(40)  # Reduced from 60px - Much more compact
+            btn.setMaximumHeight(45)  # Add maximum height constraint
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             btn.clicked.connect(handler)
             created_buttons.append(btn)
             menu_layout.addWidget(btn)
 
         menu_layout.addStretch(1)
 
-        # Style menu buttons AFTER they're created
+        # Style menu buttons AFTER they're created - Compact styling
         for i, btn in enumerate(created_buttons):
-            color = menu_buttons[i][2]
+            color = ecg_menu_buttons[i][2]
             btn.setStyleSheet(f"""
                 QPushButton {{
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                         stop:0 #ffffff, stop:1 #f8f9fa);
                     color: #1a1a1a;
-                    border: 3px solid #e9ecef;
-                    border-radius: 15px;
-                    padding: 20px 30px;
-                    font-size: 18px;
+                    border: 2px solid #e9ecef;  /* Reduced from 3px */
+                    border-radius: 8px;  /* Reduced from 15px */
+                    padding: 8px 12px;  /* Reduced from 15px 20px */
+                    font-size: 12px;  /* Reduced from 16px */
                     font-weight: bold;
                     text-align: left;
-                    margin: 4px 0;
+                    margin: 2px 0;  /* Reduced from 4px */
                 }}
                 QPushButton:hover {{
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                         stop:0 #fff5f0, stop:1 #ffe0cc);
-                    border: 4px solid {color};
+                    border: 2px solid {color};  /* Reduced from 4px */
                     color: {color};
-                    transform: translateY(-3px);
-                    box-shadow: 0 8px 25px rgba(255,102,0,0.5);
                 }}
                 QPushButton:pressed {{
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                         stop:0 #ffe0cc, stop:1 #ffcc99);
-                    border: 4px solid {color};
+                    border: 2px solid {color};  /* Reduced from 4px */
                     color: {color};
                 }}
             """)
@@ -405,7 +411,7 @@ class ECGTestPage(QWidget):
         created_buttons[0].clicked.connect(self.ecg_menu.show_save_ecg)
         
         created_buttons[1].clicked.disconnect()
-        created_buttons[1].clicked.connect(self.ecg_menu.open_ecg_window)
+        created_buttons[1].clicked.connect(self.ecg_menu.show_open_ecg)
         
         created_buttons[2].clicked.disconnect()
         created_buttons[2].clicked.connect(self.ecg_menu.show_working_mode)
@@ -414,7 +420,7 @@ class ECGTestPage(QWidget):
         created_buttons[3].clicked.connect(self.ecg_menu.show_printer_setup)
         
         created_buttons[4].clicked.disconnect()
-        created_buttons[4].clicked.connect(self.ecg_menu.set_filter_setup)
+        created_buttons[4].clicked.connect(self.ecg_menu.show_set_filter)
         
         created_buttons[5].clicked.disconnect()
         created_buttons[5].clicked.connect(self.ecg_menu.show_system_setup)
@@ -431,96 +437,96 @@ class ECGTestPage(QWidget):
         created_buttons[9].clicked.disconnect()
         created_buttons[9].clicked.connect(self.ecg_menu.show_exit)
 
-        # Recording Toggle Button Section
+        # Recording Toggle Button Section - Make it compact
         recording_frame = QFrame()
         recording_frame.setStyleSheet("""
             QFrame {
                 background: transparent;
                 border: none;
-                padding: 10px;
-                margin-top: 5px;
+                padding: 6px;  /* Reduced from 10px */
+                margin-top: 3px;  /* Reduced from 5px */
             }
         """)
+        recording_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         recording_layout = QVBoxLayout(recording_frame)
+        recording_layout.setSpacing(4)  # Reduced spacing
 
-        # Capture Screen button
+        # Capture Screen button - Make it compact
         self.capture_screen_btn = QPushButton("Capture Screen")
-        self.capture_screen_btn.setFixedHeight(77)
+        self.capture_screen_btn.setMinimumHeight(35)  # Reduced from 60px
+        self.capture_screen_btn.setMaximumHeight(40)  # Add maximum height
+        self.capture_screen_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.capture_screen_btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                     stop:0 #ffffff, stop:1 #f8f9fa);
                 color: #1a1a1a;
-                border: 3px solid #e9ecef;
-                border-radius: 15px;
-                padding: 20px 30px;
-                font-size: 18px;
+                border: 2px solid #e9ecef;  /* Reduced from 3px */
+                border-radius: 8px;  /* Reduced from 15px */
+                padding: 8px 12px;  /* Reduced from 15px 20px */
+                font-size: 12px;  /* Reduced from 16px */
                 font-weight: bold;
                 text-align: center;
-                margin: 5px 0;
+                margin: 2px 0;  /* Reduced from 5px */
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                     stop:0 #fff5f0, stop:1 #ffe0cc);
-                border: 4px solid #2453ff;
+                border: 2px solid #2453ff;  /* Reduced from 4px */
                 color: #2453ff;
-                transform: translateY(-3px);
-                box-shadow: 0 8px 25px rgba(36,83,255,0.5);
             }
             QPushButton:pressed {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                     stop:0 #e0e8ff, stop:1 #ccd9ff);
-                border: 4px solid #2453ff;
+                border: 2px solid #2453ff;  /* Reduced from 4px */
                 color: #2453ff;
             }
         """)
         self.capture_screen_btn.clicked.connect(self.capture_screen)
         recording_layout.addWidget(self.capture_screen_btn)
         
-        # Toggle-style recording button
+        # Toggle-style recording button - Make it compact
         self.recording_toggle = QPushButton("Record Screen")
-        self.recording_toggle.setFixedHeight(77)
+        self.recording_toggle.setMinimumHeight(35)  # Reduced from 60px
+        self.recording_toggle.setMaximumHeight(40)  # Add maximum height
+        self.recording_toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.recording_toggle.setCheckable(True)
         self.recording_toggle.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                     stop:0 #ffffff, stop:1 #f8f9fa);
                 color: #1a1a1a;
-                border: 3px solid #e9ecef;
-                border-radius: 15px;
-                padding: 20px 30px;
-                font-size: 18px;
+                border: 2px solid #e9ecef;  /* Reduced from 3px */
+                border-radius: 8px;  /* Reduced from 15px */
+                padding: 8px 12px;  /* Reduced from 15px 20px */
+                font-size: 12px;  /* Reduced from 16px */
                 font-weight: bold;
                 text-align: center;
-                margin: 5px 0;
+                margin: 2px 0;  /* Reduced from 5px */
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                     stop:0 #fff5f0, stop:1 #ffe0cc);
-                border: 4px solid #ff6600;
+                border: 2px solid #ff6600;  /* Reduced from 4px */
                 color: #ff6600;
-                transform: translateY(-3px);
-                box-shadow: 0 8px 25px rgba(255,102,0,0.5);
             }
             QPushButton:pressed {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                     stop:0 #ffe0cc, stop:1 #ffcc99);
-                border: 4px solid #ff6600;
+                border: 2px solid #ff6600;  /* Reduced from 4px */
                 color: #ff6600;
             }
             QPushButton:checked {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                     stop:0 #fff5f0, stop:1 #ffe0cc);
-                border: 4px solid #dc3545;
+                border: 2px solid #dc3545;  /* Reduced from 4px */
                 color: #dc3545;
-                transform: translateY(-3px);
-                box-shadow: 0 8px 25px rgba(220,53,69,0.5);
             }
             QPushButton:checked:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                     stop:0 #ffe0cc, stop:1 #ffcc99);
-                border: 4px solid #c82333;
+                border: 2px solid #c82333;  /* Reduced from 4px */
                 color: #c82333;
             }
         """)
@@ -534,29 +540,20 @@ class ECGTestPage(QWidget):
         self.recording_writer = None
         self.recording_frames = []
 
-
-        # conn_layout = QHBoxLayout()
-        # self.port_combo = QComboBox()
-        # self.baud_combo = QComboBox()
-        # self.baud_combo.addItem("Select Baud Rate")
-        # self.baud_combo.addItems(["9600", "19200", "38400", "57600", "115200"])
-        # conn_layout.addWidget(QLabel("Serial Port:"))
-        # conn_layout.addWidget(self.port_combo)
-        # conn_layout.addWidget(QLabel("Baud Rate:"))
-        # conn_layout.addWidget(self.baud_combo)
-        # self.refresh_ports()
-        # main_vbox.addLayout(conn_layout)
-
-        self.plot_area = QWidget()
-
         # Add metrics frame above the plot area
         self.metrics_frame = self.create_metrics_frame()
+        self.metrics_frame.setMaximumHeight(80)  # Reduced from default
+        self.metrics_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         main_vbox.addWidget(self.metrics_frame)
+        
+        # Create the plot area
+        self.plot_area = QWidget()
+        self.plot_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         main_vbox.addWidget(self.plot_area)
 
-        main_vbox.setSpacing(16)
-        main_vbox.setContentsMargins(24, 24, 24, 24)
+        main_vbox.setSpacing(12)  # Reduced from 16px
+        main_vbox.setContentsMargins(16, 16, 16, 16)  # Reduced from 24px
 
         self.update_lead_layout()
 
@@ -570,18 +567,27 @@ class ECGTestPage(QWidget):
         self.six_leads_btn = QPushButton("6:2")
         self.back_btn = QPushButton("Back")
 
+        # Make all buttons responsive and compact
+        for btn in [self.start_btn, self.stop_btn, self.export_pdf_btn, self.export_csv_btn, 
+                   self.sequential_btn, self.twelve_leads_btn, self.six_leads_btn, self.back_btn]:
+            btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            btn.setMinimumHeight(28)  # Reduced from 32px
+            btn.setMaximumHeight(32)  # Add maximum height constraint
+            btn.setMinimumWidth(80)   # Reduced from 100px
+            btn.setMaximumWidth(120)  # Add maximum width constraint
+
         green_color = """
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                     stop:0 #4CAF50, stop:1 #45a049);
                 color: white;
                 border: 2px solid #4CAF50;
-                border-radius: 8px;
-                padding: 8px 16px;
-                font-size: 12px;
+                border-radius: 6px;  /* Reduced from 8px */
+                padding: 6px 12px;  /* Reduced from 8px 16px */
+                font-size: 11px;  /* Reduced from 12px */
                 font-weight: bold;
-                min-height: 32px;
-                min-width: 100px;
+                min-height: 28px;  /* Reduced from 32px */
+                min-width: 80px;   /* Reduced from 100px */
                 text-align: center;
             }
             QPushButton:hover {
@@ -589,13 +595,12 @@ class ECGTestPage(QWidget):
                     stop:0 #45a049, stop:1 #4CAF50);
                 border: 2px solid #45a049;
                 color: white;
-                transform: translateY(-1px);
-                box-shadow: 0 4px 12px rgba(76,175,80,0.3);
             }
             QPushButton:pressed {
-                background: #3d8b40;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #3d8b40, stop:1 #357a38);
                 border: 2px solid #3d8b40;
-                transform: translateY(0px);
+                color: white;
             }
         """
         
@@ -654,13 +659,17 @@ class ECGTestPage(QWidget):
 
         main_hbox = QHBoxLayout(self.grid_widget)
     
-        # Add widgets to the layout
-        main_hbox.addWidget(menu_container, 0)  # Fixed width for menu
-        main_hbox.addLayout(main_vbox, 2)  # Give main_vbox more space
+        # Add widgets to the layout with responsive sizing - Better proportions
+        main_hbox.addWidget(menu_container, 1)  # Menu takes 1 part (compact)
+        main_hbox.addLayout(main_vbox, 5)  # Main content takes 5 parts (more space)
         
         # Set spacing and layout
-        main_hbox.setSpacing(15)  # Add spacing between menu and main content
+        main_hbox.setSpacing(10)  # Reduced from 15px
+        main_hbox.setContentsMargins(8, 8, 8, 8)  # Reduced from 10px
         self.grid_widget.setLayout(main_hbox)
+        
+        # Make the grid widget responsive
+        self.grid_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
         # Initial settings display update
         QTimer.singleShot(100, self.apply_display_settings)
@@ -731,15 +740,14 @@ class ECGTestPage(QWidget):
                 background: #000000;
                 border: 2px solid #333333;
                 border-radius: 6px;
-                padding: 4px;
-                margin: 2px 0;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+                padding: 3px;  /* Reduced from 4px */
+                margin: 1px 0;  /* Reduced from 2px */
             }
         """)
         
         metrics_layout = QHBoxLayout(metrics_frame)
-        metrics_layout.setSpacing(10)
-        metrics_layout.setContentsMargins(10, 10, 10, 10)
+        metrics_layout.setSpacing(6)  # Reduced from 10px
+        metrics_layout.setContentsMargins(6, 6, 6, 6)  # Reduced from 10px
         
         # Store metric labels for live update
         self.metric_labels = {}
@@ -758,26 +766,26 @@ class ECGTestPage(QWidget):
             metric_widget.setStyleSheet("""
                 QWidget {
                     background: transparent;
-                    min-width: 120px;
+                    min-width: 100px;  /* Reduced from 120px */
                     border-right: none;
                 }
             """)
             
             # Create vertical layout for the metric widget
             box = QVBoxLayout(metric_widget)
-            box.setSpacing(3)
+            box.setSpacing(2)  # Reduced from 3px
             box.setAlignment(Qt.AlignCenter)
             
-            # Title label (green color as shown in image)
+            # Title label (green color as shown in image) - Make it smaller
             lbl = QLabel(title)
-            lbl.setFont(QFont("Arial", 12, QFont.Bold))
-            lbl.setStyleSheet("color: #00ff00; margin-bottom: 5px;")  # Green color
+            lbl.setFont(QFont("Arial", 10, QFont.Bold))  # Reduced from 12px
+            lbl.setStyleSheet("color: #00ff00; margin-bottom: 3px;")  # Reduced from 5px
             lbl.setAlignment(Qt.AlignCenter)
             
-            # Value label with specific colors
+            # Value label with specific colors - Make it smaller
             val = QLabel(value)
-            val.setFont(QFont("Arial", 14, QFont.Bold))
-            val.setStyleSheet(f"color: {color}; background: transparent; padding: 4px 0px;")
+            val.setFont(QFont("Arial", 12, QFont.Bold))  # Reduced from 14px
+            val.setStyleSheet(f"color: {color}; background: transparent; padding: 2px 0px;")  # Reduced from 4px
             val.setAlignment(Qt.AlignCenter)
             
             # Add labels to the metric widget's layout
@@ -794,7 +802,7 @@ class ECGTestPage(QWidget):
         heart_rate_widget.setStyleSheet("""
             QWidget {
                 background: transparent;
-                min-width: 120px;
+                min-width: 100px;  /* Reduced from 120px */
                 border-right: none;
             }
         """)
@@ -804,15 +812,15 @@ class ECGTestPage(QWidget):
         heart_layout.setContentsMargins(0, 0, 0, 0)
         heart_layout.setAlignment(Qt.AlignCenter)
         
-        # Heart icon
+        # Heart icon - Make it smaller
         heart_icon = QLabel("❤")
-        heart_icon.setFont(QFont("Arial", 18))
+        heart_icon.setFont(QFont("Arial", 16))  # Reduced from 18px
         heart_icon.setStyleSheet("color: #ff0000; background: transparent; border: none; margin: 0; padding: 0;")
         heart_icon.setAlignment(Qt.AlignCenter)
         
-        # Heart rate value
+        # Heart rate value - Make it smaller
         heart_rate_val = QLabel("00")
-        heart_rate_val.setFont(QFont("Arial", 14, QFont.Bold))
+        heart_rate_val.setFont(QFont("Arial", 12, QFont.Bold))  # Reduced from 14px
         heart_rate_val.setStyleSheet("color: #ff0000; background: transparent; border: none; margin: 0;")
         heart_rate_val.setAlignment(Qt.AlignCenter)
         heart_rate_val.setContentsMargins(0, 0, 0, 0)
@@ -868,7 +876,7 @@ class ECGTestPage(QWidget):
                     border-radius: 6px;
                     padding: 4px;
                     margin: 2px 0;
-                    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+                    /* Removed unsupported box-shadow property */
                 }
             """)
             
@@ -903,7 +911,7 @@ class ECGTestPage(QWidget):
                     border-radius: 6px;
                     padding: 4px;
                     margin: 2px 0;
-                    box-shadow: 0 4px 15px rgba(76,175,80,0.2);
+                    /* Removed unsupported box-shadow property */
                 }
             """)
             
@@ -937,7 +945,7 @@ class ECGTestPage(QWidget):
                     border-radius: 6px;
                     padding: 4px;
                     margin: 2px 0;
-                    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+                    /* Removed unsupported box-shadow property */
                 }
             """)
             
@@ -1503,6 +1511,7 @@ class ECGTestPage(QWidget):
         self.axs = []
         self.lines = []
         grid = QGridLayout()
+        grid.setSpacing(8)  # Reduced spacing between graphs
         n_leads = len(self.leads)
         if n_leads == 12:
             rows, cols = 3, 4
@@ -1518,21 +1527,22 @@ class ECGTestPage(QWidget):
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
                         stop:0 #ffffff, stop:1 #f8f9fa);
                     border: 2px solid #e9ecef;
-                    border-radius: 16px;
+                    border-radius: 12px;  /* Reduced from 16px */
                     color: #495057;
-                    font: bold 16px 'Segoe UI';
-                    margin-top: 12px;
-                    padding: 12px;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+                    font: bold 14px 'Arial';  /* Reduced from 16px and changed font */
+                    margin-top: 8px;  /* Reduced from 12px */
+                    padding: 8px;  /* Reduced from 12px */
+                    /* Removed unsupported box-shadow property */
                 }
                 QGroupBox:hover {
                     border: 2px solid #ff6600;
-                    box-shadow: 0 6px 20px rgba(255,102,0,0.2);
-                    transform: translateY(-2px);
+                    /* Removed unsupported box-shadow and transform properties */
                 }
             """)
             vbox = QVBoxLayout(group)
-            fig = Figure(facecolor='#fafbfc', figsize=(6, 2.5))
+            vbox.setContentsMargins(6, 6, 6, 6)  # Reduced margins
+            vbox.setSpacing(4)  # Reduced spacing
+            fig = Figure(facecolor='#fafbfc', figsize=(5, 2))  # Reduced from (6, 2.5)
             ax = fig.add_subplot(111)
             ax.set_facecolor('#fafbfc')
             ylim = self.ylim if hasattr(self, 'ylim') else 400
@@ -1547,8 +1557,8 @@ class ECGTestPage(QWidget):
             for spine in ax.spines.values():
                 spine.set_visible(False)
 
-            # Style ticks
-            ax.tick_params(axis='both', colors='#6c757d', labelsize=10)
+            # Style ticks - Make them smaller
+            ax.tick_params(axis='both', colors='#6c757d', labelsize=8)  # Reduced from 10
             ax.tick_params(axis='x', length=0)
             ax.tick_params(axis='y', length=0)
 
@@ -2039,7 +2049,7 @@ class ECGTestPage(QWidget):
                 padding: 8px 16px;
                 font-weight: bold;
                 min-width: 100px;
-                box-shadow: 0 4px 12px rgba(255,102,0,0.4);
+                /* Removed unsupported box-shadow property */
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
@@ -2210,7 +2220,7 @@ class ECGTestPage(QWidget):
                 padding: 8px 16px;
                 font-weight: bold;
                 min-width: 100px;
-                box-shadow: 0 4px 12px rgba(255,102,0,0.4);
+                /* Removed unsupported box-shadow property */
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
@@ -2591,7 +2601,7 @@ class ECGTestPage(QWidget):
                 padding: 8px 16px;
                 font-weight: bold;
                 min-width: 100px;
-                box-shadow: 0 4px 12px rgba(255,102,0,0.4);
+                /* Removed unsupported box-shadow property */
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 

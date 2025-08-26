@@ -1,9 +1,9 @@
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QGridLayout, QCalendarWidget, QTextEdit,
-    QDialog, QLineEdit, QComboBox, QFormLayout, QMessageBox, QSizePolicy, QStackedWidget
+    QDialog, QLineEdit, QComboBox, QFormLayout, QMessageBox, QSizePolicy, QStackedWidget, QScrollArea, QSpacerItem
 )
 from PyQt5.QtGui import QFont, QPixmap, QMovie
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QSize
 import sys
 import numpy as np
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -14,6 +14,63 @@ import os
 import json
 import matplotlib.image as mpimg
 from dashboard.chatbot_dialog import ChatbotDialog
+
+# Try to import configuration, fallback to defaults if not available
+try:
+    import sys
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    from dashboard_config import get_background_config
+    print("✓ Dashboard configuration loaded successfully")
+except ImportError:
+    print("⚠ Dashboard configuration not found, using default settings")
+    def get_background_config():
+        return {
+            "use_gif_background": False,
+            "preferred_background": "none"
+        }
+
+def get_asset_path(asset_name):
+    """
+    Get the absolute path to an asset file in a portable way.
+    This function will work regardless of where the script is run from.
+    
+    Args:
+        asset_name (str): Name of the asset file (e.g., 'her.png', 'v.gif')
+    
+    Returns:
+        str: Absolute path to the asset file
+    """
+    # Get the directory where this script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Try multiple possible locations for the assets folder
+    possible_paths = [
+        # Standard project structure: src/dashboard/dashboard.py -> assets/
+        os.path.join(os.path.dirname(os.path.dirname(script_dir)), "assets"),
+        # Alternative: if running from project root
+        os.path.join(script_dir, "assets"),
+        # Alternative: if running from src/
+        os.path.join(os.path.dirname(script_dir), "assets"),
+        # Alternative: if running from dashboard/
+        os.path.join(script_dir, "..", "assets"),
+    ]
+    
+    # Find the first valid assets directory
+    assets_dir = None
+    for path in possible_paths:
+        if os.path.exists(path) and os.path.isdir(path):
+            assets_dir = path
+            break
+    
+    if assets_dir is None:
+        print(f"Warning: Could not find assets directory. Tried paths: {possible_paths}")
+        # Return a default path as fallback
+        return os.path.join(os.path.dirname(script_dir), "..", "assets", asset_name)
+    
+    # Return the full path to the asset
+    asset_path = os.path.join(assets_dir, asset_name)
+    
+    return asset_path
 
 class MplCanvas(FigureCanvas):
     def __init__(self, width=4, height=2, dpi=100):
@@ -67,63 +124,147 @@ class DashboardHomeWidget(QWidget):
 class Dashboard(QWidget):
     def __init__(self, username=None, role=None):
         super().__init__()
+        
+        # Set responsive size policy
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumSize(800, 600)  # Minimum size for usability
+        
+        # Store username and role
         self.username = username
         self.role = role
-        self.medical_mode = False
+        
+        # Initialize mode flags
         self.dark_mode = False
+        self.medical_mode = False
+        
         self.setWindowTitle("ECG Monitor Dashboard")
         self.setGeometry(100, 100, 1300, 900)
         self.setWindowFlags(self.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
         self.setWindowState(Qt.WindowMaximized)
         self.center_on_screen()
+        
+        # Test asset paths at startup for debugging
+        self.test_asset_paths()
+        
+        # Load background settings from configuration file
+        config = get_background_config()
+        self.use_gif_background = config.get("use_gif_background", False)
+        self.preferred_background = config.get("preferred_background", "none")
+        
+        print(f"Dashboard background: {self.preferred_background} (GIF: {self.use_gif_background})")
+        
         # --- Plasma GIF background ---
         self.bg_label = QLabel(self)
-        self.bg_label.setGeometry(0, 0, 1300, 900)
+        self.bg_label.setGeometry(0, 0, self.width(), self.height())
         self.bg_label.lower()
-        movie = QMovie("plasma.gif")
-        self.bg_label.setMovie(movie)
-        movie.start()
+        
+        # Try to load background GIFs using portable paths
+        if not self.use_gif_background:
+            # Use solid color background
+            self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #f8f9fa, stop:1 #e9ecef);")
+            print("Using solid color background (GIF background disabled)")
+        else:
+            # Priority order based on user preference
+            movie = None
+            if self.preferred_background == "plasma.gif":
+                plasma_path = get_asset_path("plasma.gif")
+                if os.path.exists(plasma_path):
+                    movie = QMovie(plasma_path)
+                    print("Using plasma.gif as background")
+                else:
+                    print("plasma.gif not found, trying alternatives...")
+                    self.preferred_background = "tenor.gif"  # Fallback
+            
+            if self.preferred_background == "tenor.gif" and not movie:
+                tenor_gif_path = get_asset_path("tenor.gif")
+                if os.path.exists(tenor_gif_path):
+                    movie = QMovie(tenor_gif_path)
+                    print("Using tenor.gif as background")
+                else:
+                    print("tenor.gif not found, trying alternatives...")
+                    self.preferred_background = "v.gif"  # Fallback
+            
+            if self.preferred_background == "v.gif" and not movie:
+                v_gif_path = get_asset_path("v.gif")
+                if os.path.exists(v_gif_path):
+                    movie = QMovie(v_gif_path)
+                    print("Using v.gif as background")
+                else:
+                    print("v.gif not found, using solid color background")
+            
+            if movie:
+                self.bg_label.setMovie(movie)
+                movie.start()
+            else:
+                # If no GIF found, create a solid color background
+                self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #f8f9fa, stop:1 #e9ecef);")
+                print("Using solid color background (no GIFs found)")
+        
         # --- Central stacked widget for in-place navigation ---
         self.page_stack = QStackedWidget(self)
+        
         # --- Dashboard main page widget ---
         self.dashboard_page = DashboardHomeWidget()
         dashboard_layout = QVBoxLayout(self.dashboard_page)
         dashboard_layout.setSpacing(20)
         dashboard_layout.setContentsMargins(20, 20, 20, 20)
+        
         # --- Header ---
         header = QHBoxLayout()
         logo = QLabel("ECG Monitor")
         logo.setFont(QFont("Arial", 20, QFont.Bold))
         logo.setStyleSheet("color: #ff6600;")
+        logo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         header.addWidget(logo)
+        
         self.status_dot = QLabel()
         self.status_dot.setFixedSize(18, 18)
         self.status_dot.setStyleSheet("border-radius: 9px; background: gray; border: 2px solid #fff;")
         header.addWidget(self.status_dot)
+        
         self.update_internet_status()
         self.status_timer = QTimer(self)
         self.status_timer.timeout.connect(self.update_internet_status)
         self.status_timer.start(3000)
+        
         self.medical_btn = QPushButton("Medical Mode")
         self.medical_btn.setCheckable(True)
         self.medical_btn.setStyleSheet("background: #00b894; color: white; border-radius: 10px; padding: 4px 18px;")
         self.medical_btn.clicked.connect(self.toggle_medical_mode)
+        self.medical_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         header.addWidget(self.medical_btn)
+        
         self.dark_btn = QPushButton("Dark Mode")
         self.dark_btn.setCheckable(True)
         self.dark_btn.setStyleSheet("background: #222; color: #fff; border-radius: 10px; padding: 4px 18px;")
         self.dark_btn.clicked.connect(self.toggle_dark_mode)
+        self.dark_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         header.addWidget(self.dark_btn)
+        
+        # Background control button
+        bg_text = "BG: Clean"  # Default to clean background
+        self.bg_btn = QPushButton(bg_text)
+        self.bg_btn.setStyleSheet("background: #6c5ce7; color: white; border-radius: 10px; padding: 4px 18px;")
+        self.bg_btn.clicked.connect(self.cycle_background)
+        self.bg_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        header.addWidget(self.bg_btn)
+        
         header.addStretch()
-        self.user_label = QLabel(f"{self.username or 'User'}\n{self.role or ''}")
+        
+        self.user_label = QLabel(f"{username or 'User'}\n{role or ''}")
         self.user_label.setFont(QFont("Arial", 10))
         self.user_label.setAlignment(Qt.AlignRight)
+        self.user_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         header.addWidget(self.user_label)
+        
         self.sign_btn = QPushButton("Sign Out")
         self.sign_btn.setStyleSheet("background: #e74c3c; color: white; border-radius: 10px; padding: 4px 18px;")
         self.sign_btn.clicked.connect(self.handle_sign_out)
+        self.sign_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         header.addWidget(self.sign_btn)
+        
         dashboard_layout.addLayout(header)
+        
         # --- Greeting and Date Row ---
         greet_row = QHBoxLayout()
         from datetime import datetime
@@ -134,75 +275,121 @@ class Dashboard(QWidget):
             greeting = "Good Afternoon"
         else:
             greeting = "Good Evening"
-        greet = QLabel(f"<span style='font-size:18pt;font-weight:bold;'>{greeting}, {self.username or 'User'}</span><br><span style='color:#888;'>Welcome to your ECG dashboard</span>")
+        
+        greet = QLabel(f"<span style='font-size:18pt;font-weight:bold;'>{greeting}, {username or 'User'}</span><br><span style='color:#888;'>Welcome to your ECG dashboard</span>")
         greet.setFont(QFont("Arial", 14))
+        greet.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         greet_row.addWidget(greet)
         greet_row.addStretch()
+        
         date_btn = QPushButton("ECG Lead Test 12")
         date_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 16px; padding: 8px 24px;")
         date_btn.clicked.connect(self.go_to_lead_test)
+        date_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(date_btn)
 
         # --- Add Chatbot Button ---
         chatbot_btn = QPushButton("AI Chatbot")
         chatbot_btn.setStyleSheet("background: #2453ff; color: white; border-radius: 16px; padding: 8px 24px;")
         chatbot_btn.clicked.connect(self.open_chatbot_dialog)
+        chatbot_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(chatbot_btn)
 
         dashboard_layout.addLayout(greet_row)
 
         # --- Main Grid ---
-        grid = QGridLayout()
+        # Create a scroll area for responsive design
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        grid_widget = QWidget()
+        grid = QGridLayout(grid_widget)
         grid.setSpacing(20)
+        
         # --- Heart Rate Card ---
         heart_card = QFrame()
         heart_card.setStyleSheet("background: white; border-radius: 16px;")
+        heart_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         heart_layout = QVBoxLayout(heart_card)
+        
         heart_label = QLabel("Live Heart Rate Overview")
         heart_label.setFont(QFont("Arial", 14, QFont.Bold))
+        heart_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        heart_layout.addWidget(heart_label)
+        
         heart_img = QLabel()
-        # Use a portable path for the heart image asset
-        # heart_img_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "her.png")
-        # heart_img_path = os.path.abspath(heart_img_path)
-        # print(f"Pratyaksh Heart image path: {heart_img_path}")  # Debugging line to check the path
-        # print(f"Pratyaksh Heart image exists: {os.path.exists(heart_img_path)}")  # Check if the file exists
-        self.heart_pixmap = QPixmap("/Users/ptr/Downloads/Pratyaksh1/modularecg/assets/her.png")
+        # Use portable path for the heart image asset
+        heart_img_path = get_asset_path("her.png")
+        print(f"Heart image path: {heart_img_path}")  # Debugging line to check the path
+        print(f"Heart image exists: {os.path.exists(heart_img_path)}")  # Check if the file exists
+        
+        # Load the heart image with error handling
+        if os.path.exists(heart_img_path):
+            self.heart_pixmap = QPixmap(heart_img_path)
+            if self.heart_pixmap.isNull():
+                print(f"Error: Failed to load heart image from {heart_img_path}")
+                # Create a placeholder pixmap
+                self.heart_pixmap = QPixmap(220, 220)
+                self.heart_pixmap.fill(Qt.lightGray)
+        else:
+            print(f"Error: Heart image not found at {heart_img_path}")
+            # Create a placeholder pixmap
+            self.heart_pixmap = QPixmap(220, 220)
+            self.heart_pixmap.fill(Qt.lightGray)
+        
         self.heart_base_size = 220
         heart_img.setFixedSize(self.heart_base_size + 20, self.heart_base_size + 20)
         heart_img.setAlignment(Qt.AlignCenter)
         heart_img.setPixmap(self.heart_pixmap.scaled(self.heart_base_size, self.heart_base_size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        heart_layout.addWidget(heart_label)
+        heart_img.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         heart_layout.addWidget(heart_img)
+        
         heart_layout.addWidget(QLabel("Stress Level: Low"))
         heart_layout.addWidget(QLabel("Average Variability: 90ms"))
+        
         grid.addWidget(heart_card, 0, 0, 2, 1)
+        
         # --- Heartbeat Animation ---
         self.heart_img = heart_img
         self.heartbeat_phase = 0
         self.heartbeat_timer = QTimer(self)
         self.heartbeat_timer.timeout.connect(self.animate_heartbeat)
         self.heartbeat_timer.start(30)  # ~33 FPS
+        
         # --- ECG Recording (Animated Chart) ---
         ecg_card = QFrame()
-        ecg_card.setStyle
+        ecg_card.setStyleSheet("background: white; border-radius: 16px;")
+        ecg_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         ecg_layout = QVBoxLayout(ecg_card)
+        
         ecg_label = QLabel("ECG Recording")
         ecg_label.setFont(QFont("Arial", 12, QFont.Bold))
+        ecg_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         ecg_layout.addWidget(ecg_label)
+        
         self.ecg_canvas = MplCanvas(width=4, height=2)
         self.ecg_canvas.axes.set_facecolor("#eee")
         self.ecg_canvas.axes.set_xticks([])
         self.ecg_canvas.axes.set_yticks([])
         self.ecg_canvas.axes.set_title("Lead II", fontsize=10)
+        self.ecg_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         ecg_layout.addWidget(self.ecg_canvas)
+        
         grid.addWidget(ecg_card, 1, 1)
+        
         # --- Total Visitors (Pie Chart) ---
         visitors_card = QFrame()
         visitors_card.setStyleSheet("background: white; border-radius: 16px;")
+        visitors_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         visitors_layout = QVBoxLayout(visitors_card)
+        
         visitors_label = QLabel("Total Visitors")
         visitors_label.setFont(QFont("Arial", 12, QFont.Bold))
+        visitors_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         visitors_layout.addWidget(visitors_label)
+        
         pie_canvas = MplCanvas(width=2.5, height=2.5)
         pie_data = [30, 25, 30, 15]
         pie_labels = ["December", "November", "October", "September"]
@@ -211,14 +398,20 @@ class Dashboard(QWidget):
             pie_data, labels=pie_labels, autopct='%1.0f%%', colors=pie_colors, startangle=90
         )
         pie_canvas.axes.set_aspect('equal')
+        pie_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         visitors_layout.addWidget(pie_canvas)
+        
         grid.addWidget(visitors_card, 1, 2)
+        
         # --- Schedule Card ---
         schedule_card = QFrame()
         schedule_card.setStyleSheet("background: white; border-radius: 16px;")
+        schedule_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         schedule_layout = QVBoxLayout(schedule_card)
+        
         schedule_label = QLabel("Schedule")
         schedule_label.setFont(QFont("Arial", 12, QFont.Bold))
+        schedule_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         schedule_layout.addWidget(schedule_label)
         cal = QCalendarWidget()
         cal.setFixedHeight(120)
@@ -251,10 +444,14 @@ class Dashboard(QWidget):
         # --- Issue Found Card ---
         issue_card = QFrame()
         issue_card.setStyleSheet("background: white; border-radius: 16px;")
+        issue_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         issue_layout = QVBoxLayout(issue_card)
+        
         issue_label = QLabel("Issue Found")
         issue_label.setFont(QFont("Arial", 12, QFont.Bold))
+        issue_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         issue_layout.addWidget(issue_label)
+        
         issues_text = (
             "1. Heart Rate\n"
             "   • Tachycardia: Abnormally fast heart rate.\n"
@@ -282,17 +479,23 @@ class Dashboard(QWidget):
             "10. Cardiac Arrest Patterns\n"
             "   • Asystole, ventricular fibrillation, PEA."
         )
+        
         issues_box = QTextEdit()
         issues_box.setReadOnly(True)
         issues_box.setText(issues_text)
         issues_box.setStyleSheet("background: #f7f7f7; border: none; font-size: 12px;")
         issues_box.setMinimumHeight(180)
+        issues_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         issue_layout.addWidget(issues_box)
+        
         grid.addWidget(issue_card, 2, 1, 1, 2)
+        
         # --- ECG Monitor Metrics Cards ---
         metrics_card = QFrame()
         metrics_card.setStyleSheet("background: white; border-radius: 16px;")
+        metrics_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         metrics_layout = QHBoxLayout(metrics_card)
+        
         # Store metric labels for live update
         self.metric_labels = {}
         metric_info = [
@@ -303,22 +506,33 @@ class Dashboard(QWidget):
             ("QRS Axis", "--", "°", "qrs_axis"),
             ("ST Segment", "--", "", "st_segment"),
         ]
+        
         for title, value, unit, key in metric_info:
             box = QVBoxLayout()
             lbl = QLabel(title)
             lbl.setFont(QFont("Arial", 10, QFont.Bold))
+            lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             val = QLabel(f"{value} {unit}")
             val.setFont(QFont("Arial", 16, QFont.Bold))
+            val.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             box.addWidget(lbl)
             box.addWidget(val)
             metrics_layout.addLayout(box)
             self.metric_labels[key] = val  # Store reference for live update
-        grid.addWidget(metrics_card, 0, 1, 1, 2)
-        dashboard_layout.addLayout(grid)
         
+        grid.addWidget(metrics_card, 0, 1, 1, 2)
+        
+        # Add the grid widget to the scroll area
+        scroll_area.setWidget(grid_widget)
+        
+        # Add scroll area to dashboard layout
+        dashboard_layout.addWidget(scroll_area)
+        
+        # Add generate report button
         self.generate_report_btn = QPushButton("Generate Report")
         self.generate_report_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 10px; padding: 8px 24px; font-size: 16px; font-weight: bold;")
         self.generate_report_btn.clicked.connect(self.generate_pdf_report)
+        self.generate_report_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         dashboard_layout.addWidget(self.generate_report_btn, alignment=Qt.AlignRight)
         
         # --- ECG Animation Setup ---
@@ -618,9 +832,145 @@ class Dashboard(QWidget):
         # Update ECG test page theme if it exists
         if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'update_metrics_frame_theme'):
             self.ecg_test_page.update_metrics_frame_theme(self.dark_mode, self.medical_mode)
+    
+    def test_asset_paths(self):
+        """
+        Test all asset paths at startup to ensure they're working correctly.
+        This helps with debugging path issues.
+        """
+        print("=== Testing Asset Paths ===")
+        
+        # Test common assets
+        test_assets = ["her.png", "v.gif", "plasma.gif", "ECG1.png"]
+        
+        for asset in test_assets:
+            path = get_asset_path(asset)
+            exists = os.path.exists(path)
+            print(f"{asset}: {'✓' if exists else '✗'} - {path}")
+            
+            if not exists:
+                print(f"  Warning: {asset} not found!")
+        
+        print("=== Asset Path Test Complete ===\n")
+    
+    def change_background(self, background_type):
+        """
+        Change the dashboard background dynamically.
+        
+        Args:
+            background_type (str): "plasma.gif", "tenor.gif", "v.gif", "solid", or "none"
+        """
+        if background_type == "none":
+            self.use_gif_background = False
+            self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #f8f9fa, stop:1 #e9ecef);")
+            print("Background changed to solid color")
+            return
+        
+        self.use_gif_background = True
+        self.preferred_background = background_type
+        
+        # Stop current movie if any
+        if hasattr(self.bg_label, 'movie'):
+            self.bg_label.movie().stop()
+        
+        # Load new background
+        movie = None
+        if background_type == "plasma.gif":
+            plasma_path = get_asset_path("plasma.gif")
+            if os.path.exists(plasma_path):
+                movie = QMovie(plasma_path)
+                print("Background changed to plasma.gif")
+            else:
+                print("plasma.gif not found, keeping current background")
+                return
+        elif background_type == "tenor.gif":
+            tenor_gif_path = get_asset_path("tenor.gif")
+            if os.path.exists(tenor_gif_path):
+                movie = QMovie(tenor_gif_path)
+                print("Background changed to tenor.gif")
+            else:
+                print("tenor.gif not found, keeping current background")
+                return
+        elif background_type == "v.gif":
+            v_gif_path = get_asset_path("v.gif")
+            if os.path.exists(v_gif_path):
+                movie = QMovie(v_gif_path)
+                print("Background changed to v.gif")
+            else:
+                print("v.gif not found, keeping current background")
+                return
+        
+        if movie:
+            self.bg_label.setMovie(movie)
+            movie.start()
+            # Store reference to movie
+            self.bg_label.movie = lambda: movie
+    
+    def cycle_background(self):
+        """
+        Cycle through different background options when the background button is clicked.
+        """
+        backgrounds = ["solid", "light_gradient", "dark_gradient", "medical_theme"]
+        current_bg = "solid"  # Default to solid
+        
+        try:
+            current_index = backgrounds.index(current_bg)
+            next_index = (current_index + 1) % len(backgrounds)
+            next_bg = backgrounds[next_index]
+        except ValueError:
+            next_bg = "solid"
+        
+        if next_bg == "solid":
+            self.change_background("none")
+            self.bg_btn.setText("BG: Solid")
+        elif next_bg == "light_gradient":
+            self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ffffff, stop:1 #f0f0f0);")
+            self.bg_btn.setText("BG: Light")
+        elif next_bg == "dark_gradient":
+            self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #2c3e50, stop:1 #34495e);")
+            self.bg_btn.setText("BG: Dark")
+        elif next_bg == "medical_theme":
+            self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e8f5e8, stop:1 #d4edda);")
+            self.bg_btn.setText("BG: Medical")
         
     def center_on_screen(self):
         qr = self.frameGeometry()
         cp = QApplication.desktop().availableGeometry().center()
         qr.moveCenter(cp)
         self.move(qr.topLeft())
+
+    def resizeEvent(self, event):
+        """Handle window resize events to maintain responsive design"""
+        super().resizeEvent(event)
+        
+        # Update background label size to match new window size
+        if hasattr(self, 'bg_label'):
+            self.bg_label.setGeometry(0, 0, self.width(), self.height())
+        
+        # Ensure all widgets maintain proper proportions
+        self.update_layout_proportions()
+    
+    def update_layout_proportions(self):
+        """Update layout proportions when window is resized"""
+        # This method can be used to adjust layout proportions based on window size
+        current_width = self.width()
+        current_height = self.height()
+        
+        # Adjust font sizes based on window size for better readability
+        if current_width < 1000:
+            # Small window - use smaller fonts
+            font_size = 12
+        elif current_width < 1400:
+            # Medium window - use medium fonts
+            font_size = 14
+        else:
+            # Large window - use larger fonts
+            font_size = 16
+        
+        # Update font sizes for better responsiveness
+        for child in self.findChildren(QLabel):
+            if hasattr(child, 'font'):
+                current_font = child.font()
+                if current_font.pointSize() > 8:  # Don't make fonts too small
+                    current_font.setPointSize(max(8, font_size - 2))
+                    child.setFont(current_font)

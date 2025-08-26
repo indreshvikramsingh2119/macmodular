@@ -6,7 +6,29 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 
+
+def get_asset_path(asset_name):
+    """
+    Get the absolute path to an asset file in a portable way.
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    possible_paths = [
+        os.path.join(os.path.dirname(os.path.dirname(script_dir)), "assets"),
+        os.path.join(script_dir, "assets"),
+        os.path.join(os.path.dirname(script_dir), "assets"),
+        os.path.join(script_dir, "..", "assets"),
+    ]
+    
+    for path in possible_paths:
+        if os.path.exists(path) and os.path.isdir(path):
+            return os.path.join(path, asset_name)
+    
+    # Fallback
+    return os.path.join(script_dir, "..", "assets", asset_name)
+
+
 USER_DATA_FILE = os.path.join(os.path.dirname(__file__), '../../users.json')
+
 
 class SignIn:
     def __init__(self):
@@ -38,11 +60,16 @@ class SignIn:
         self.save_users()
         return True
 
+
 class LoginRegisterDialog(QDialog):
     def __init__(self):
         super().__init__()
+        
+        # Set responsive size policy
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumSize(600, 400)  # Minimum size for usability
+        
         self.setWindowTitle("ECG Monitor - Sign In / Sign Up")
-        self.setFixedSize(700, 400)
         self.setWindowFlags(self.windowFlags() | Qt.WindowMinMaxButtonsHint)
         self.setStyleSheet("""
             QDialog { background: #fff; border-radius: 18px; }
@@ -57,66 +84,89 @@ class LoginRegisterDialog(QDialog):
         self.username = None
 
     def init_ui(self):
+        from PyQt5.QtWidgets import QSizePolicy
         from PyQt5.QtGui import QMovie, QPixmap
+        
         main_layout = QHBoxLayout()
+        
         # Left: Logo/Image with plasma effect background
         logo_widget = QWidget()
+        logo_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         logo_layout = QVBoxLayout()
         logo_layout.setAlignment(Qt.AlignCenter)
-        # Plasma effect background
-        plasma_bg = QLabel()
-        plasma_bg.setFixedSize(260, 260)
-        plasma_gif_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../assets/tenor.gif'))
-        if os.path.exists(plasma_gif_path):
-            plasma_movie = QMovie(plasma_gif_path)
-            plasma_bg.setMovie(plasma_movie)
-            plasma_movie.start()
-        else:
-            plasma_bg.setStyleSheet("background: #e0e0e0; border-radius: 130px;")
-        # ECG image on top of plasma effect
+        
+        # Clean background instead of plasma effect
+        bg_label = QLabel()
+        bg_label.setFixedSize(260, 260)
+        bg_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        bg_label.setStyleSheet("""
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
+                stop:0 #667eea, stop:1 #764ba2);
+            border-radius: 130px;
+        """)
+        
+        # ECG image on top of clean background
         logo_label = QLabel()
-        logo_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../assets/ECG1.png'))
+        logo_path = get_asset_path('ECG1.png')
         if os.path.exists(logo_path):
             logo_pixmap = QPixmap(logo_path).scaled(180, 180, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             logo_label.setPixmap(logo_pixmap)
             logo_label.setStyleSheet("background: transparent;")
             logo_label.setAlignment(Qt.AlignCenter)
+            logo_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         else:
             logo_label.setText("<b>PulseMonitor</b>")
-        # Stack plasma and ECG image
-        plasma_container = QVBoxLayout()
-        plasma_container.setAlignment(Qt.AlignCenter)
-        plasma_container.addWidget(plasma_bg, alignment=Qt.AlignCenter)
-        plasma_container.addWidget(logo_label, alignment=Qt.AlignCenter)
+            logo_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        
+        # Stack background and ECG image
+        bg_container = QVBoxLayout()
+        bg_container.setAlignment(Qt.AlignCenter)
+        bg_container.addWidget(bg_label, alignment=Qt.AlignCenter)
+        bg_container.addWidget(logo_label, alignment=Qt.AlignCenter)
+        
         logo_layout.addStretch(1)
-        logo_layout.addLayout(plasma_container)
+        logo_layout.addLayout(bg_container)
         logo_layout.addStretch(1)
         logo_widget.setLayout(logo_layout)
+        
         # Right: Form
         form_widget = QWidget()
+        form_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         form_layout = QVBoxLayout()
         form_layout.setAlignment(Qt.AlignCenter)
+        
         self.stacked = QStackedWidget(self)
+        self.stacked.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.login_widget = self.create_login_widget()
         self.register_widget = self.create_register_widget()
         self.stacked.addWidget(self.login_widget)
         self.stacked.addWidget(self.register_widget)
+        
         btn_layout = QHBoxLayout()
         self.login_tab = QPushButton("Sign In")
         self.signup_tab = QPushButton("Sign Up")
+        
+        # Make buttons responsive
+        for btn in [self.login_tab, self.signup_tab]:
+            btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            btn.setMinimumWidth(100)
+        
         self.login_tab.clicked.connect(lambda: self.stacked.setCurrentIndex(0))
         self.signup_tab.clicked.connect(lambda: self.stacked.setCurrentIndex(1))
         btn_layout.addWidget(self.login_tab)
         btn_layout.addWidget(self.signup_tab)
+        
         title = QLabel("<span style='font-family:cursive;font-size:32px;color:#222;'>PulseMonitor</span>")
         title.setAlignment(Qt.AlignCenter)
+        title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         form_layout.addWidget(title)
         form_layout.addLayout(btn_layout)
         form_layout.addWidget(self.stacked)
         form_widget.setLayout(form_layout)
-        # Add to main layout (image left, form right)
-        main_layout.addWidget(logo_widget, 3)
-        main_layout.addWidget(form_widget, 2)
+        
+        # Add to main layout (image left, form right) with responsive proportions
+        main_layout.addWidget(logo_widget, 2)  # Logo takes 2 parts
+        main_layout.addWidget(form_widget, 3)  # Form takes 3 parts (more space)
         self.setLayout(main_layout)
 
     def create_login_widget(self):
