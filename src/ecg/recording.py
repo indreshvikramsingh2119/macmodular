@@ -8,7 +8,10 @@ from matplotlib.figure import Figure
 import numpy as np
 from PyQt5.QtCore import QTimer, Qt, QPropertyAnimation, QEasingCurve, QTimer, pyqtProperty
 from utils.settings_manager import SettingsManager
-
+import os
+import matplotlib.pyplot as plt
+import pandas as pd 
+ 
 class ECGRecording:
     def __init__(self):
         self.recording = False
@@ -3039,3 +3042,110 @@ class ECGMenu(QGroupBox):
             layout.addWidget(btn_frame)
         
         return widget
+    
+    def show_dummy(self):
+        import threading
+        import time
+        
+        base_dir = os.path.dirname(__file__)
+        csv_path = os.path.join(base_dir, "dummydata.csv")
+        
+        leads = ["I", "II", "III", "aVR", "aVL", "aVF",
+                 "V1", "V2", "V3", "V4", "V5", "V6"]
+
+        # --- Start dummy data writer in background ---
+        
+        # --- Create dialog with matplotlib canvas ---
+        dialog = QDialog(self.dashboard if self.dashboard else self)
+        dialog.setWindowTitle("Live Dummy ECG")
+        layout = QVBoxLayout(dialog)
+        
+        # Create matplotlib figure
+        fig, axes = plt.subplots(3, 4, figsize=(16, 10), sharex=True)
+        axes = axes.flatten()
+        
+        # Create canvas and add to layout
+        canvas = FigureCanvas(fig)
+        layout.addWidget(canvas)
+        
+        # Load the existing CSV data once
+        if os.path.exists(csv_path):
+            df = pd.read_csv(csv_path, sep='\t')  # Tab-separated file ke liye
+            print(f"Loaded {len(df)} rows of data")
+            print(f"Columns: {list(df.columns)}")
+        else:
+            print(f"CSV file {csv_path} not found!")
+            return
+        
+        # Get the number of samples
+        num_samples = len(df)
+        window_size = 120  
+        current_index = 0
+        
+        # Set up plots with compact styling
+        for idx, lead in enumerate(leads):
+            axes[idx].set_ylabel(lead, fontsize=9, fontweight='bold') 
+            axes[idx].grid(True, alpha=0.2) 
+            axes[idx].set_ylim(df[lead].min() - 50, df[lead].max() + 50)  
+            
+            # Remove unnecessary elements for cleaner look
+            axes[idx].spines['top'].set_visible(False)
+            axes[idx].spines['right'].set_visible(False)
+            axes[idx].set_xticks([])
+            axes[idx].set_yticks([])  
+        
+        # Compact title
+        fig.suptitle('12-Lead ECG Monitor', fontsize=14, fontweight='bold', y=0.95)
+        
+        def update_plot():
+            nonlocal current_index
+            
+            # Calculate start and end indices for sliding window
+            start_idx = max(0, current_index - window_size)
+            end_idx = current_index + 1
+            
+            # Update each lead plot
+            for idx, lead in enumerate(leads):
+                axes[idx].cla()
+                
+                # Plot the data in sliding window
+                x_data = range(start_idx, end_idx)
+                y_data = df[lead].iloc[start_idx:end_idx]
+                axes[idx].plot(x_data, y_data, linewidth=1.2, color='#1f77b4') 
+                
+                # Add current position indicator
+                if current_index < len(df):
+                    current_value = df[lead].iloc[current_index]
+                    axes[idx].plot(current_index, current_value, 'ro', markersize=4, alpha=0.8) 
+                    axes[idx].axvline(x=current_index, color='red', linestyle='--', alpha=0.6, linewidth=0.8)  
+                
+                # Compact styling
+                axes[idx].set_ylabel(lead, fontsize=9, fontweight='bold')
+                axes[idx].grid(True, alpha=0.2)
+                axes[idx].set_ylim(df[lead].min() - 50, df[lead].max() + 50)
+                
+                # Remove all unnecessary elements
+                axes[idx].set_xticks([])
+                axes[idx].set_yticks([])
+                axes[idx].spines['top'].set_visible(False)
+                axes[idx].spines['right'].set_visible(False)
+            
+            # Compact title with sample info
+            fig.suptitle(f'ECG Monitor - Sample: {current_index}/{num_samples-1}', 
+                         fontsize=12, fontweight='bold', y=0.95)
+            
+            # Tighter layout - less wasted space
+            fig.tight_layout(pad=0.5)
+            canvas.draw()
+            
+            # Move to next sample (loop back to start)
+            current_index = (current_index + 1) % num_samples
+
+        # --- Timer for live update ---
+        timer = QTimer(dialog)
+        timer.timeout.connect(update_plot)
+        timer.start(100)  # 10 FPS for smooth animation
+
+        dialog.setMinimumSize(1600, 1000)
+        dialog.showMaximized() 
+        dialog.exec_()

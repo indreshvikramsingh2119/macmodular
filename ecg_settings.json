@@ -1,7 +1,7 @@
 {
-  "wave_speed": "50",
+  "wave_speed": "25",
   "wave_gain": "5",
-  "lead_sequence": "Cabrera",
+  "lead_sequence": "Standard",
   "sampling_mode": "Sequence",
   "demo_function": "Off",
   "storage": "U",
