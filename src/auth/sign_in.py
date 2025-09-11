@@ -134,7 +134,6 @@ class LoginRegisterDialog(QDialog):
         form_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         form_layout = QVBoxLayout()
         form_layout.setAlignment(Qt.AlignCenter)
-        
         self.stacked = QStackedWidget(self)
         self.stacked.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.login_widget = self.create_login_widget()
@@ -171,45 +170,116 @@ class LoginRegisterDialog(QDialog):
 
     def create_login_widget(self):
         widget = QWidget()
+        widget.setStyleSheet("background: transparent;")
         layout = QVBoxLayout()
+        layout.setSpacing(15)
+        
         self.login_username = QLineEdit()
         self.login_username.setPlaceholderText("Username")
+        self.login_username.setStyleSheet("""
+            QLineEdit {
+                background: rgba(255, 255, 255, 0.2);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 10px;
+                padding: 12px 15px;
+                font-size: 16px;
+                color: white;
+                font-weight: bold;
+            }
+            QLineEdit::placeholder {
+                color: rgba(255, 255, 255, 0.7);
+            }
+            QLineEdit:focus {
+                border: 2px solid rgba(255, 255, 255, 0.6);
+                background: rgba(255, 255, 255, 0.25);
+            }
+        """)
+        
         self.login_password = QLineEdit()
         self.login_password.setPlaceholderText("Password")
         self.login_password.setEchoMode(QLineEdit.Password)
+        self.login_password.setStyleSheet(self.login_username.styleSheet())
+        
         login_btn = QPushButton("Sign In")
+        login_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(255, 255, 255, 0.25);
+                color: white;
+                border: 1px solid rgba(255, 255, 255, 0.4);
+                border-radius: 12px;
+                padding: 12px 0;
+                font-size: 18px;
+                font-weight: bold;
+                margin-top: 10px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.35);
+                border: 1px solid rgba(255, 255, 255, 0.6);
+            }
+            QPushButton:pressed {
+                background: rgba(255, 255, 255, 0.45);
+            }
+        """)
         login_btn.clicked.connect(self.handle_login)
+        
         layout.addWidget(self.login_username)
         layout.addWidget(self.login_password)
         layout.addWidget(login_btn)
+        layout.addStretch(1)
         widget.setLayout(layout)
         return widget
 
     def create_register_widget(self):
         widget = QWidget()
+        widget.setStyleSheet("background: transparent;")
         layout = QVBoxLayout()
+        layout.setSpacing(12)
+        
+        # Create all input fields with glass morphism style
         self.reg_username = QLineEdit()
         self.reg_username.setPlaceholderText("Username")
+        self.reg_username.setStyleSheet(self.login_username.styleSheet())
+        
         self.reg_password = QLineEdit()
         self.reg_password.setPlaceholderText("Password")
         self.reg_password.setEchoMode(QLineEdit.Password)
+        self.reg_password.setStyleSheet(self.login_username.styleSheet())
+        
         self.reg_confirm = QLineEdit()
         self.reg_confirm.setPlaceholderText("Confirm Password")
         self.reg_confirm.setEchoMode(QLineEdit.Password)
+        self.reg_confirm.setStyleSheet(self.login_username.styleSheet())
+        
         self.reg_fullname = QLineEdit()
         self.reg_fullname.setPlaceholderText("Full Name")
+        self.reg_fullname.setStyleSheet(self.login_username.styleSheet())
+        
         self.reg_age = QLineEdit()
         self.reg_age.setPlaceholderText("Age")
+        self.reg_age.setStyleSheet(self.login_username.styleSheet())
+        
         self.reg_gender = QLineEdit()
         self.reg_gender.setPlaceholderText("Gender")
+        self.reg_gender.setStyleSheet(self.login_username.styleSheet())
+        
         self.reg_contact = QLineEdit()
         self.reg_contact.setPlaceholderText("Contact Number")
+        self.reg_contact.setStyleSheet(self.login_username.styleSheet())
+        
         self.reg_email = QLineEdit()
         self.reg_email.setPlaceholderText("Email Address")
+        self.reg_email.setStyleSheet(self.login_username.styleSheet())
+        
         register_btn = QPushButton("Sign Up")
+        register_btn.setStyleSheet(self.login_btn.styleSheet())
         register_btn.clicked.connect(self.handle_register)
-        for w in [self.reg_username, self.reg_password, self.reg_confirm, self.reg_fullname, self.reg_age, self.reg_gender, self.reg_contact, self.reg_email, register_btn]:
+        
+        # Set size policy for all widgets
+        for w in [self.reg_username, self.reg_password, self.reg_confirm, self.reg_fullname, 
+                  self.reg_age, self.reg_gender, self.reg_contact, self.reg_email, register_btn]:
             w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        
+        # Add widgets to layout
         layout.addWidget(self.reg_username)
         layout.addWidget(self.reg_password)
         layout.addWidget(self.reg_confirm)

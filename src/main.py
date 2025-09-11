@@ -6,11 +6,29 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QPixmap
-from auth.sign_in import SignIn
-from auth.sign_out import SignOut
-from dashboard.dashboard import Dashboard
-from splash_screen import SplashScreen
-from ecg.pan_tompkins import pan_tompkins
+# Import modules with fallback handling
+try:
+    from auth.sign_in import SignIn
+    from auth.sign_out import SignOut
+    from dashboard.dashboard import Dashboard
+    from splash_screen import SplashScreen
+    print("✅ Core modules imported successfully")
+except ImportError as e:
+    print(f"❌ Core module import error: {e}")
+    print("💡 Make sure you're running from the src directory")
+    print("💡 Try: cd src && python main.py")
+    sys.exit(1)
+
+# Import ECG modules with fallback
+try:
+    from ecg.pan_tompkins import pan_tompkins
+    print("✅ ECG modules imported successfully")
+except ImportError as e:
+    print(f"⚠️ ECG module import warning: {e}")
+    print("💡 ECG analysis features may be limited")
+    # Create a dummy function to prevent errors
+    def pan_tompkins(ecg, fs=500):
+        return []
 
 
 def resource_path(relative_path):
@@ -73,12 +91,44 @@ class LoginRegisterDialog(QDialog):
         self.bg_label = QLabel(self)
         self.bg_label.setGeometry(0, 0, self.width(), self.height())
         self.bg_label.lower()
-        gif_path = resource_path('assets/v.gif')
-        if os.path.exists(gif_path):
-            from PyQt5.QtGui import QMovie
-            movie = QMovie(gif_path)
-            self.bg_label.setMovie(movie)
-            movie.start()
+        
+        # Try multiple possible paths for the v.gif file
+        possible_gif_paths = [
+            resource_path('assets/v.gif'),
+            resource_path('../assets/v.gif'),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'assets', 'v.gif'),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'assets', 'v.gif')
+        ]
+        
+        gif_path = None
+        for path in possible_gif_paths:
+            if os.path.exists(path):
+                gif_path = path
+                print(f"✅ Found v.gif at: {gif_path}")
+                break
+        
+        if gif_path and os.path.exists(gif_path):
+            try:
+                from PyQt5.QtGui import QMovie
+                movie = QMovie(gif_path)
+                if movie.isValid():
+                    self.bg_label.setMovie(movie)
+                    movie.start()
+                    print("✅ v.gif background started successfully")
+                else:
+                    print("❌ Invalid GIF file")
+                    # Set fallback background
+                    self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1a1a2e, stop:1 #16213e);")
+            except Exception as e:
+                print(f"❌ Error loading v.gif: {e}")
+                # Set fallback background
+                self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1a1a2e, stop:1 #16213e);")
+        else:
+            print("❌ v.gif not found in any expected location")
+            print(f"Tried paths: {possible_gif_paths}")
+            # Set fallback background
+            self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1a1a2e, stop:1 #16213e);")
+        
         self.bg_label.setScaledContents(True)
         # --- Title and tagline above glass ---
         main_layout = QVBoxLayout(self)
@@ -112,7 +162,7 @@ class LoginRegisterDialog(QDialog):
             QWidget#Glass {
                 background: rgba(255,255,255,0.18);
                 border-radius: 24px;
-                border: 2px solid rgba(255,255,255,0.35);
+                border: 2px solid rgba(255,255,255,0.35);zx
             }
         """)
         glass.setMinimumSize(600, 520)
@@ -157,6 +207,7 @@ class LoginRegisterDialog(QDialog):
         stacked_col.addLayout(signup_row)
         # Add login prompt to register widget
         login_row = QHBoxLayout()
+        
         login_row.addStretch(1)
         login_lbl = QLabel("Already have an account?")
         login_lbl.setStyleSheet("color: #fff; font-size: 15px;")
@@ -182,10 +233,27 @@ class LoginRegisterDialog(QDialog):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         # Resize background with window
         self.resizeEvent = self._resize_bg
+        
+        # Ensure background is always visible
+        self.ensure_background_visible()
+
 
     def _resize_bg(self, event):
+        """Handle window resize to maintain background coverage"""
         self.bg_label.setGeometry(0, 0, self.width(), self.height())
+        # Ensure the background stays behind all other widgets
+        self.bg_label.lower()
         event.accept()
+    
+    def ensure_background_visible(self):
+        """Ensure the background is always visible and properly positioned"""
+        # Make sure the background label is at the bottom of the widget stack
+        self.bg_label.lower()
+        # Ensure it covers the entire window
+        self.bg_label.setGeometry(0, 0, self.width(), self.height())
+        # Make sure it's visible
+        self.bg_label.setVisible(True)
+        print("✅ Background visibility ensured")
 
     def create_login_widget(self):
         widget = QWidget()
@@ -213,10 +281,14 @@ class LoginRegisterDialog(QDialog):
         layout.addWidget(phone_btn)
         # Add nav links under phone_btn
         nav_row = QHBoxLayout()
-        from nav_home import NavHome
-        from nav_about import NavAbout
-        from nav_blog import NavBlog
-        from nav_pricing import NavPricing
+        try:
+            from nav_home import NavHome
+            from nav_about import NavAbout
+            from nav_blog import NavBlog
+            from nav_pricing import NavPricing
+        except ImportError as e:
+            print(f"❌ Navigation import error: {e}")
+            return
         nav_links = [
             ("Home", NavHome),
             ("About us", NavAbout),
@@ -235,7 +307,11 @@ class LoginRegisterDialog(QDialog):
             self.nav_stack.addWidget(page)
             self.nav_pages[text] = page
             if text == "Pricing":
-                from nav_pricing import show_pricing_dialog
+                try:
+                    from nav_pricing import show_pricing_dialog
+                except ImportError as e:
+                    print(f"❌ Pricing dialog import error: {e}")
+                    return
                 nav_btn.clicked.connect(lambda checked, p=self: show_pricing_dialog(p))
             else:
                 nav_btn.clicked.connect(lambda checked, t=text: show_nav_page(t))

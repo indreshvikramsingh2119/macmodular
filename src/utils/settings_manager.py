@@ -52,3 +52,9 @@ class SettingsManager:
     
     def get_baud_rate(self):
         return self.get_setting("baud_rate")
+    
+    def set_serial_port(self, port):
+        self.set_setting("serial_port", port)
+    
+    def set_baud_rate(self, baud_rate):
+        self.set_setting("baud_rate", baud_rate)

@@ -19,7 +19,12 @@ from dashboard.chatbot_dialog import ChatbotDialog
 try:
     import sys
     sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    from dashboard_config import get_background_config
+    try:
+        from dashboard_config import get_background_config
+    except ImportError as e:
+        print(f"⚠️ Dashboard config import warning: {e}")
+        def get_background_config():
+            return {"background": "none", "gif": False}
     print("✓ Dashboard configuration loaded successfully")
 except ImportError:
     print("⚠ Dashboard configuration not found, using default settings")
@@ -199,7 +204,6 @@ class Dashboard(QWidget):
                 # If no GIF found, create a solid color background
                 self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #f8f9fa, stop:1 #e9ecef);")
                 print("Using solid color background (no GIFs found)")
-        
         # --- Central stacked widget for in-place navigation ---
         self.page_stack = QStackedWidget(self)
         
@@ -323,6 +327,8 @@ class Dashboard(QWidget):
         # Use portable path for the heart image asset
         heart_img_path = get_asset_path("her.png")
         print(f"Heart image path: {heart_img_path}")  # Debugging line to check the path
+        # Ensure os module is available
+        import os
         print(f"Heart image exists: {os.path.exists(heart_img_path)}")  # Check if the file exists
         
         # Load the heart image with error handling
@@ -338,7 +344,6 @@ class Dashboard(QWidget):
             # Create a placeholder pixmap
             self.heart_pixmap = QPixmap(220, 220)
             self.heart_pixmap.fill(Qt.lightGray)
-        
         self.heart_base_size = 220
         heart_img.setFixedSize(self.heart_base_size + 20, self.heart_base_size + 20)
         heart_img.setAlignment(Qt.AlignCenter)
@@ -503,7 +508,7 @@ class Dashboard(QWidget):
             ("PR Interval", "--", "ms", "pr_interval"),
             ("QRS Duration", "--", "ms", "qrs_duration"),
             ("QTc Interval", "--", "ms", "qtc_interval"),
-            ("QRS Axis", "--", "°", "qrs_axis"),
+            ("QRS Axis", "--", "", "qrs_axis"),
             ("ST Segment", "--", "", "st_segment"),
         ]
         
@@ -540,10 +545,72 @@ class Dashboard(QWidget):
         self.ecg_y = 1000 + 200 * np.sin(2 * np.pi * 2 * self.ecg_x) + 50 * np.random.randn(500)
         self.ecg_line, = self.ecg_canvas.axes.plot(self.ecg_x, self.ecg_y, color="#ff6600")
         self.anim = FuncAnimation(self.ecg_canvas.figure, self.update_ecg, interval=50, blit=True)
+        
+        # --- Dashboard Metrics Update Timer ---
+        self.metrics_timer = QTimer(self)
+        self.metrics_timer.timeout.connect(self.update_dashboard_metrics_from_ecg)
+        self.metrics_timer.start(1000)  # Update every second
         # Add dashboard_page to stack
         self.page_stack.addWidget(self.dashboard_page)
         # --- ECG Test Page ---
-        from ecg.twelve_lead_test import ECGTestPage
+        try:
+            # Try different import paths
+            import sys
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            cwd = os.getcwd()
+            
+            print(f"🔍 Current file directory: {current_dir}")
+            print(f"🔍 Current working directory: {cwd}")
+            
+            # Add current working directory to path first (most likely to work)
+            if cwd not in sys.path:
+                sys.path.insert(0, cwd)
+                print(f"✅ Added current working directory to path: {cwd}")
+            
+            # Try importing from current working directory
+            try:
+                from ecg.twelve_lead_test import ECGTestPage
+                print("✅ ECG Test Page imported successfully (from cwd)")
+            except ImportError as e:
+                print(f"❌ CWD import failed: {e}")
+                # Try from current file directory
+                if current_dir not in sys.path:
+                    sys.path.insert(0, current_dir)
+                    print(f"✅ Added current file directory to path: {current_dir}")
+                try:
+                    from ecg.twelve_lead_test import ECGTestPage
+                    print("✅ ECG Test Page imported successfully (from file dir)")
+                except ImportError as e2:
+                    print(f"❌ File dir import failed: {e2}")
+                    # Try alternative path - go up one level to find src
+                    project_root = os.path.dirname(current_dir)
+                    src_path = os.path.join(project_root, 'src')
+                    if src_path not in sys.path:
+                        sys.path.insert(0, src_path)
+                        print(f"✅ Added alternative path: {src_path}")
+                    try:
+                        from ecg.twelve_lead_test import ECGTestPage
+                        print("✅ ECG Test Page imported successfully (alternative path)")
+                    except ImportError as e3:
+                        print(f"❌ Alternative import failed: {e3}")
+                        raise ImportError(f"Could not import ECGTestPage: {e3}")
+                    
+        except ImportError as e:
+            print(f"❌ ECG Test Page import error: {e}")
+            print("💡 Creating fallback ECG Test Page")
+            # Create a fallback ECG test page
+            class ECGTestPage(QWidget):
+                def __init__(self, title, parent):
+                    super().__init__()
+                    self.title = title
+                    self.parent = parent
+                    self.dashboard_callback = None
+                    layout = QVBoxLayout()
+                    label = QLabel("ECG Test Page - Import Error")
+                    label.setAlignment(Qt.AlignCenter)
+                    layout.addWidget(label)
+                    self.setLayout(layout)
+                    print("⚠️ Using fallback ECG Test Page")
         self.ecg_test_page = ECGTestPage("12 Lead ECG Test", self.page_stack)
         self.ecg_test_page.dashboard_callback = self.update_ecg_metrics
 
@@ -570,7 +637,7 @@ class Dashboard(QWidget):
         dlg.exec_()
 
     def update_ecg(self, frame):
-        import os, json
+        import json
         lead_ii_file = 'lead_ii_live.json'
         if os.path.exists(lead_ii_file):
             try:
@@ -619,11 +686,48 @@ class Dashboard(QWidget):
         # Also update the ECG test page theme if it exists
         if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'update_metrics_frame_theme'):
             self.ecg_test_page.update_metrics_frame_theme(self.dark_mode, self.medical_mode)
+    
+    def update_dashboard_metrics_from_ecg(self):
+        """Update dashboard metrics from ECG test page data"""
+        try:
+            if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
+                # Get current metrics from ECG test page
+                if hasattr(self.ecg_test_page, 'get_current_metrics'):
+                    ecg_metrics = self.ecg_test_page.get_current_metrics()
+                    
+                    # Update dashboard metrics with ECG test page data
+                    if 'heart_rate' in ecg_metrics:
+                        hr_text = ecg_metrics['heart_rate']
+                        if hr_text and hr_text != '00' and hr_text != '--':
+                            self.metric_labels['heart_rate'].setText(f"{hr_text} bpm")
+                    
+                    if 'pr_interval' in ecg_metrics:
+                        pr_text = ecg_metrics['pr_interval']
+                        if pr_text and pr_text != '--':
+                            self.metric_labels['pr_interval'].setText(f"{pr_text} ms")
+                    
+                    if 'qrs_duration' in ecg_metrics:
+                        qrs_text = ecg_metrics['qrs_duration']
+                        if qrs_text and qrs_text != '--':
+                            self.metric_labels['qrs_duration'].setText(f"{qrs_text} ms")
+                    
+                    if 'sampling_rate' in ecg_metrics:
+                        sr_text = ecg_metrics['sampling_rate']
+                        if sr_text and sr_text != '--':
+                            self.metric_labels['sampling_rate'].setText(f"{sr_text}")
+                            
+        except Exception as e:
+            print(f"❌ Error updating dashboard metrics from ECG: {e}")
             
     def generate_pdf_report(self):
         from PyQt5.QtWidgets import QFileDialog, QMessageBox
         import datetime
-        from ecg.ecg_report_generator import generate_ecg_html_report
+        try:
+            from ecg.ecg_report_generator import generate_ecg_html_report
+        except ImportError as e:
+            print(f"⚠️ ECG report generator import warning: {e}")
+            def generate_ecg_html_report(*args, **kwargs):
+                return "ECG Report Generator not available"
 
         # Gather details from dashboard
         HR = self.metric_labels['heart_rate'].text().split()[0] if 'heart_rate' in self.metric_labels else "--"
@@ -651,7 +755,7 @@ class Dashboard(QWidget):
 
         # Get ECGTestPage instance and its figures
 
-        bg_img_path = "ecg_bgimg.png" # Path to background image
+        bg_img_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ecg_bgimg.png") # Path to background image
 
         ecg_test_page = self.ecg_test_page
         for lead in ordered_leads:
@@ -757,8 +861,12 @@ class Dashboard(QWidget):
             self.ecg_test_page.update_metrics_frame_theme(self.dark_mode, self.medical_mode)
             
         self.page_stack.setCurrentWidget(self.ecg_test_page)
+        # Update metrics when opening ECG test page
+        self.update_dashboard_metrics_from_ecg()
     def go_to_dashboard(self):
         self.page_stack.setCurrentWidget(self.dashboard_page)
+        # Update metrics when returning to dashboard
+        self.update_dashboard_metrics_from_ecg()
     def update_internet_status(self):
         import socket
         try:
