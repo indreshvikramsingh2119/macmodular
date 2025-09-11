@@ -510,6 +510,7 @@ class Dashboard(QWidget):
             ("QTc Interval", "--", "ms", "qtc_interval"),
             ("QRS Axis", "--", "", "qrs_axis"),
             ("ST Segment", "--", "", "st_segment"),
+            ("Sampling Rate", "--", "Hz", "sampling_rate"),
         ]
         
         for title, value, unit, key in metric_info:

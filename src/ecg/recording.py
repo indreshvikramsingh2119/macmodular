@@ -363,6 +363,8 @@ class ECGMenu(QGroupBox):
     def __init__(self, parent=None, dashboard=None):
         super().__init__("", parent)
         self.dashboard = dashboard
+        # Reference to ECG test page for cross-component communication
+        self.ecg_test_page = None
         self.settings_manager = None
         self.sliding_panel = None
         self.settings_changed_callback = None
@@ -405,6 +407,10 @@ class ECGMenu(QGroupBox):
         
         # Setup global resize monitoring
         QTimer.singleShot(100, self.setup_global_resize_monitoring)
+
+    def set_ecg_test_page(self, ecg_test_page):
+        """Attach the active ECG test page so menu actions can interact with it."""
+        self.ecg_test_page = ecg_test_page
 
     def setup_parent_monitoring(self, parent):
         """Setup monitoring for parent widget changes"""

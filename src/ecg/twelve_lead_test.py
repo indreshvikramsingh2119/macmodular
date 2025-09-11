@@ -188,7 +188,7 @@ class SerialECGReader:
         try:
             line_raw = self.ser.readline()
             line_data = line_raw.decode('utf-8', errors='replace').strip()
-            
+
             if line_data:
                 self.data_count += 1
                 # Print detailed data information
@@ -220,6 +220,7 @@ class SerialECGReader:
                             return None
                     except ValueError:
                         print(f"⚠️ Non-numeric data received: '{line_data}'")
+                        return None
             else:
                 print("⏳ No data received (timeout)")
                 
@@ -651,7 +652,7 @@ class ECGTestPage(QWidget):
         "V5": "#00b894",
         "V6": "#ff0066"
     }
-    
+
     def __init__(self, test_name, stacked_widget):
         super().__init__()
         
@@ -746,7 +747,7 @@ class ECGTestPage(QWidget):
         header_label.setAlignment(Qt.AlignCenter)
         header_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         menu_layout.addWidget(header_label)
-
+        
         # Create ECGMenu instance to use its methods
         self.ecg_menu = ECGMenu(parent=self, dashboard=self.stacked_widget.parent())
         # Connect ECGMenu to this ECG test page for data communication
@@ -1006,8 +1007,12 @@ class ECGTestPage(QWidget):
             lead_color = lead_colors.get(lead_name, '#000000')
             
             plot_widget.setTitle(self.leads[i], color=lead_color, size='10pt')
-            # Set initial Y-range, will be updated dynamically based on data
+            # Set initial and safe Y-limits; dynamic autoscale will adjust per data
             plot_widget.setYRange(-2000, 2000)
+            vb = plot_widget.getViewBox()
+            if vb is not None:
+                # Prevent extreme jumps while still allowing wide physiological range
+                vb.setLimits(yMin=-8000, yMax=8000)
             
             # --- MAKE PLOT CLICKABLE ---
             plot_widget.scene().sigMouseClicked.connect(partial(self.plot_clicked, i))
@@ -1024,7 +1029,7 @@ class ECGTestPage(QWidget):
             self.r_peaks_scatter = self.plot_widgets[1].plot([], [], pen=None, symbol='o', symbolBrush='r', symbolSize=8)
         else:
             self.r_peaks_scatter = None
-
+        
         main_vbox.setSpacing(12)  # Reduced from 16px
         main_vbox.setContentsMargins(16, 16, 16, 16)  # Reduced from 24px
 
@@ -1233,7 +1238,10 @@ class ECGTestPage(QWidget):
             
             # Apply bandpass filter to enhance R-peaks (0.5-40 Hz)
             from scipy.signal import butter, filtfilt
-            fs = 500  # Sampling rate
+            # Use measured sampling rate if available; default to 500 Hz
+            fs = 500
+            if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
+                fs = float(self.sampler.sampling_rate)
             nyquist = fs / 2
             low = 0.5 / nyquist
             high = 40 / nyquist
@@ -1298,7 +1306,7 @@ class ECGTestPage(QWidget):
             return 100  # ms
         except:
             return 0
-
+    
     def calculate_qrs_axis(self):
         """Calculate QRS axis from leads I and aVF"""
         try:
@@ -1377,42 +1385,42 @@ class ECGTestPage(QWidget):
             return {}
 
     def update_plot_y_range(self, plot_index):
-        """Update Y-axis range for a specific plot based on its data"""
+        """Update Y-axis range for a specific plot using robust stats to avoid cropping"""
         try:
             if plot_index >= len(self.data) or plot_index >= len(self.plot_widgets):
                 return
-            
+
             # Get the data for this plot
             data = self.data[plot_index]
             
-            # Remove NaN values and get valid data
+            # Remove NaN values and large outliers (robust)
             valid_data = data[~np.isnan(data)]
             
             if len(valid_data) == 0:
                 return
             
-            # Calculate data statistics
-            data_min = np.min(valid_data)
-            data_max = np.max(valid_data)
-            data_mean = np.mean(valid_data)
-            data_std = np.std(valid_data)
+            # Use percentiles to avoid spikes from clipping the view
+            p1 = np.percentile(valid_data, 1)
+            p99 = np.percentile(valid_data, 99)
+            data_mean = (p1 + p99) / 2.0
+            data_std = np.std(valid_data[(valid_data >= p1) & (valid_data <= p99)])
             
             # Calculate appropriate Y-range with some padding
             if data_std > 0:
-                # Use standard deviation for dynamic range
-                padding = max(data_std * 2, 100)  # At least 100 units padding
+                # Use standard deviation within central band
+                padding = max(data_std * 3, 150)  # At least 150 units padding
                 y_min = data_mean - padding
                 y_max = data_mean + padding
             else:
-                # Fallback to min/max with padding
-                data_range = data_max - data_min
-                padding = max(data_range * 0.1, 50)  # 10% padding or at least 50 units
-                y_min = data_min - padding
-                y_max = data_max + padding
+                # Fallback: use percentile window
+                data_range = max(p99 - p1, 200)
+                padding = max(data_range * 0.25, 150)
+                y_min = data_mean - padding
+                y_max = data_mean + padding
             
             # Ensure reasonable bounds
-            y_min = max(y_min, data_min - 500)
-            y_max = min(y_max, data_max + 500)
+            y_min = max(y_min, -8000)
+            y_max = min(y_max, 8000)
             
             # Update the plot's Y-range
             self.plot_widgets[plot_index].setYRange(y_min, y_max, padding=0)
@@ -1477,7 +1485,7 @@ class ECGTestPage(QWidget):
         print(f"Applied settings: speed={wave_speed}mm/s, gain={wave_gain}mm/mV, buffer={self.buffer_size}, ylim={self.ylim}")
 
     # ------------------------ Update Dashboard Metrics on the top of the lead graphs ------------------------
-
+    
     def create_metrics_frame(self):
         metrics_frame = QFrame()
         metrics_frame.setObjectName("metrics_frame")
@@ -1765,7 +1773,7 @@ class ECGTestPage(QWidget):
                 'QRS_axis': qrs_axis,
                 'ST': st_segment * 1000
             }
-            
+                
         except Exception as e:
             print(f"Error calculating ECG intervals: {e}")
             return {}
@@ -2902,7 +2910,7 @@ class ECGTestPage(QWidget):
                     writer.writerow(row)
 
     def go_back(self):
-
+        """Go back to the dashboard"""
         if hasattr(self, '_overlay_active') and self._overlay_active:
             self._restore_original_layout()
 
