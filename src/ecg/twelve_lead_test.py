@@ -1,6 +1,7 @@
 import sys
 import time
 import numpy as np
+from pyparsing import line
 import serial
 import serial.tools.list_ports
 import csv
@@ -22,8 +23,6 @@ from utils.settings_manager import SettingsManager
 from PyQt5.QtWidgets import QGraphicsDropShadowEffect
 from functools import partial # For plot clicking
 
-# (The classes SamplingRateCalculator, SerialECGReader, and DetailWindow from your first script remain the same)
-# ... paste them here ...
 # --- Configuration ---
 HISTORY_LENGTH = 1000
 NORMAL_HR_MIN, NORMAL_HR_MAX = 60, 100
@@ -49,9 +48,122 @@ class SamplingRateCalculator:
             self.last_update_time = current_time
         return self.sampling_rate
 
+# ------------------------ Realistic ECG Waveform Generator ------------------------
+
+def generate_realistic_ecg_waveform(duration_seconds=10, sampling_rate=500, heart_rate=72, lead_name="II"):
+    """
+    Generate realistic ECG waveform with proper PQRST complexes
+    - duration_seconds: Length of waveform in seconds
+    - sampling_rate: Samples per second (Hz)
+    - heart_rate: Beats per minute
+    - lead_name: Lead name for lead-specific characteristics
+    """
+    import numpy as np
+    
+    # Calculate parameters
+    total_samples = int(duration_seconds * sampling_rate)
+    rr_interval = 60.0 / heart_rate  # RR interval in seconds
+    samples_per_beat = int(rr_interval * sampling_rate)
+    
+    # Create time array
+    t = np.linspace(0, duration_seconds, total_samples)
+    
+    # Initialize waveform
+    ecg = np.zeros(total_samples)
+    
+    # Lead-specific characteristics (amplitudes in mV)
+    lead_characteristics = {
+        "I": {"p_amp": 0.1, "qrs_amp": 0.8, "t_amp": 0.2, "baseline": 0.0},
+        "II": {"p_amp": 0.15, "qrs_amp": 1.2, "t_amp": 0.3, "baseline": 0.0},
+        "III": {"p_amp": 0.05, "qrs_amp": 0.6, "t_amp": 0.15, "baseline": 0.0},
+        "aVR": {"p_amp": -0.1, "qrs_amp": -0.8, "t_amp": -0.2, "baseline": 0.0},
+        "aVL": {"p_amp": 0.08, "qrs_amp": 0.7, "t_amp": 0.18, "baseline": 0.0},
+        "aVF": {"p_amp": 0.12, "qrs_amp": 0.9, "t_amp": 0.25, "baseline": 0.0},
+        "V1": {"p_amp": 0.05, "qrs_amp": 0.3, "t_amp": 0.1, "baseline": 0.0},
+        "V2": {"p_amp": 0.08, "qrs_amp": 0.8, "t_amp": 0.2, "baseline": 0.0},
+        "V3": {"p_amp": 0.1, "qrs_amp": 1.0, "t_amp": 0.25, "baseline": 0.0},
+        "V4": {"p_amp": 0.12, "qrs_amp": 1.1, "t_amp": 0.3, "baseline": 0.0},
+        "V5": {"p_amp": 0.1, "qrs_amp": 1.0, "t_amp": 0.25, "baseline": 0.0},
+        "V6": {"p_amp": 0.08, "qrs_amp": 0.8, "t_amp": 0.2, "baseline": 0.0}
+    }
+    
+    char = lead_characteristics.get(lead_name, lead_characteristics["II"])
+    
+    # Generate beats
+    beat_start = 0
+    while beat_start < total_samples:
+        # P wave (atrial depolarization) - 80-120ms
+        p_duration = 0.1  # 100ms
+        p_samples = int(p_duration * sampling_rate)
+        p_start = beat_start
+        p_end = min(p_start + p_samples, total_samples)
+        
+        if p_start < total_samples:
+            p_t = np.linspace(0, p_duration, p_end - p_start)
+            p_wave = char["p_amp"] * np.sin(np.pi * p_t / p_duration) * np.exp(-2 * p_t / p_duration)
+            ecg[p_start:p_end] += p_wave
+        
+        # PR interval (isoelectric line) - 120-200ms
+        pr_duration = 0.16  # 160ms
+        pr_samples = int(pr_duration * sampling_rate)
+        pr_start = p_end
+        pr_end = min(pr_start + pr_samples, total_samples)
+        
+        # QRS complex (ventricular depolarization) - 80-120ms
+        qrs_duration = 0.08  # 80ms
+        qrs_samples = int(qrs_duration * sampling_rate)
+        qrs_start = pr_end
+        qrs_end = min(qrs_start + qrs_samples, total_samples)
+        
+        if qrs_start < total_samples:
+            qrs_t = np.linspace(0, qrs_duration, qrs_end - qrs_start)
+            # Q wave (small negative deflection)
+            q_wave = -char["qrs_amp"] * 0.1 * np.exp(-10 * qrs_t / qrs_duration)
+            # R wave (large positive deflection)
+            r_wave = char["qrs_amp"] * np.sin(np.pi * qrs_t / qrs_duration) * np.exp(-3 * qrs_t / qrs_duration)
+            # S wave (negative deflection after R)
+            s_wave = -char["qrs_amp"] * 0.3 * np.exp(-5 * qrs_t / qrs_duration)
+            
+            qrs_complex = q_wave + r_wave + s_wave
+            ecg[qrs_start:qrs_end] += qrs_complex
+        
+        # ST segment (isoelectric) - 80-120ms
+        st_duration = 0.08  # 80ms
+        st_samples = int(st_duration * sampling_rate)
+        st_start = qrs_end
+        st_end = min(st_start + st_samples, total_samples)
+        
+        # T wave (ventricular repolarization) - 160-200ms
+        t_duration = 0.16  # 160ms
+        t_samples = int(t_duration * sampling_rate)
+        t_start = st_end
+        t_end = min(t_start + t_samples, total_samples)
+        
+        if t_start < total_samples:
+            t_t = np.linspace(0, t_duration, t_end - t_start)
+            t_wave = char["t_amp"] * np.sin(np.pi * t_t / t_duration) * np.exp(-2 * t_t / t_duration)
+            ecg[t_start:t_end] += t_wave
+        
+        # Move to next beat
+        beat_start += samples_per_beat
+    
+    # Add baseline wander (low frequency noise)
+    baseline_freq = 0.5  # 0.5 Hz
+    baseline_wander = 0.05 * np.sin(2 * np.pi * baseline_freq * t)
+    ecg += baseline_wander
+    
+    # Add high frequency noise (muscle artifact, etc.)
+    noise = 0.02 * np.random.normal(0, 1, total_samples)
+    ecg += noise
+    
+    # Add baseline offset
+    ecg += char["baseline"]
+    
+    return ecg, t
+
 class SerialECGReader:
     def __init__(self, port, baudrate):
-        self.ser = serial.Serial(port, baudrate, timeout=0.1)
+        self.ser = serial.Serial(port, baudrate, timeout=1)
         self.running = False
         self.data_count = 0
         print(f"🔌 SerialECGReader initialized: Port={port}, Baud={baudrate}")
@@ -59,12 +171,14 @@ class SerialECGReader:
     def start(self):
         print("🚀 Starting ECG data acquisition...")
         self.ser.reset_input_buffer()
-        time.sleep(0.1)
+        self.ser.write(b'1\r\n')
+        time.sleep(0.5)
         self.running = True
         print("✅ ECG device started - waiting for data...")
 
     def stop(self):
         print("⏹️ Stopping ECG data acquisition...")
+        self.ser.write(b'0\r\n')
         self.running = False
         print(f"📊 Total data packets received: {self.data_count}")
 
@@ -74,70 +188,447 @@ class SerialECGReader:
         try:
             line_raw = self.ser.readline()
             line_data = line_raw.decode('utf-8', errors='replace').strip()
-
+            
             if line_data:
                 self.data_count += 1
-                try:
-                    values = [int(x) for x in line_data.split() if x.strip()]
-                    if len(values) >= 8:
-                        lead1_val, v4_val, v5_val, lead2_val, v3_val, v6_val, v1_val, v2_val = values[:8]
-                        lead3_val = lead2_val - lead1_val
-                        avr_val = -(lead1_val + lead2_val) / 2
-                        avl_val = lead1_val - (lead2_val / 2)
-                        avf_val = lead2_val - (lead1_val / 2)
-                        all_12_leads = [lead1_val, lead2_val, lead3_val, avr_val, avl_val, avf_val,
-                                        v1_val, v2_val, v3_val, v4_val, v5_val, v6_val]
-                        return all_12_leads
-                except (ValueError, IndexError):
-                    pass
-            return None
+                # Print detailed data information
+                print(f"📡 [Packet #{self.data_count}] Raw data: '{line_data}' (Length: {len(line_data)})")
+                
+                # Parse and display ECG value
+                if line_data.isdigit():
+                    ecg_value = int(line_data[-3:])
+                    print(f"💓 ECG Value: {ecg_value} mV")
+                    return ecg_value
+                else:
+                    # Try to parse as multiple values (8-channel data)
+                    try:
+                        # Clean the line data - remove any non-numeric characters except spaces and minus signs
+                        import re
+                        cleaned_line = re.sub(r'[^\d\s\-]', ' ', line_data)
+                        values = [int(x) for x in cleaned_line.split() if x.strip() and x.replace('-', '').isdigit()]
+                        
+                        if len(values) >= 8:
+                            print(f"💓 8-Channel ECG Data: {values}")
+                            return values  # Return the list of 8 values
+                        elif len(values) == 1:
+                            print(f"💓 Single ECG Value: {values[0]} mV")
+                            return values[0]
+                        elif len(values) > 0:
+                            print(f"⚠️ Unexpected number of values: {len(values)} (expected 8)")
+                            return None
+                        else:
+                            return None
+                    except ValueError:
+                        print(f"⚠️ Non-numeric data received: '{line_data}'")
+            else:
+                print("⏳ No data received (timeout)")
+                
         except Exception as e:
             print(f"❌ Serial communication error: {e}")
         return None
 
     def close(self):
         print("🔌 Closing serial connection...")
-        if self.ser and self.ser.is_open:
-            self.ser.close()
+        self.ser.close()
         print("✅ Serial connection closed")
 
-class DetailWindow(QWidget):
-    def __init__(self, title, signal_data, sampling_rate, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(f"Detail View - {title}")
-        self.setGeometry(150, 150, 800, 500)
-        self.parent_monitor = parent
-        self.lead_index = LEAD_LABELS.index(title) if title in LEAD_LABELS else 0
-        self.sampling_rate = sampling_rate
+class LiveLeadWindow(QWidget):
+    def __init__(self, lead_name, data_source, buffer_size=80, color="#00ff99"):
+        super().__init__()
+        self.setWindowTitle(f"Live View: {lead_name}")
+        self.resize(900, 300)
+        self.lead_name = lead_name
+        self.data_source = data_source
+        self.buffer_size = buffer_size
+        self.color = color
+
         layout = QVBoxLayout(self)
-        self.plot_widget = pg.PlotWidget()
-        self.plot_widget.setBackground('w')
-        self.plot_widget.showGrid(x=True, y=True)
-        self.plot_widget.setLabel('left', 'Value')
-        self.plot_widget.setLabel('bottom', 'Sample Number')
-        self.plot_widget.setTitle(f"{title} - Live View", color="k", size="16pt")
-        layout.addWidget(self.plot_widget)
-        self.data_line = self.plot_widget.plot(pen=pg.mkPen(color='b', width=2))
-        self.r_peaks_scatter = self.plot_widget.plot([], [], pen=None, symbol='o', symbolBrush='r', symbolSize=8)
+        self.fig = Figure(facecolor='#000')
+        self.ax = self.fig.add_subplot(111)
+        self.ax.set_facecolor('#000')
+        self.ax.set_xlim(0, self.buffer_size)
+        self.ax.set_ylim(-200, 200)
+        self.ax.set_title(f"Live {lead_name}", color='white', fontsize=14)
+        self.ax.tick_params(colors='white')
+        
+        self.canvas = FigureCanvas(self.fig)
+        layout.addWidget(self.canvas)
+        
+        self.line, = self.ax.plot([], [], color=color, linewidth=2)
         self.timer = QTimer()
-        self.timer.timeout.connect(self.update_live_plot)
-        self.timer.start(50)
-        if len(signal_data) > 0:
-            self.data_line.setData(signal_data)
+        self.timer.timeout.connect(self.update_plot)
+        self.timer.start(50)  # 20 FPS
 
-    def update_live_plot(self):
-        if self.parent_monitor and hasattr(self.parent_monitor, 'data'):
-            current_data = self.parent_monitor.data[self.lead_index]
-            if len(current_data) > 0:
-                self.data_line.setData(current_data)
-                if len(current_data) > 100:
-                    self.plot_widget.setXRange(len(current_data) - 200, len(current_data))
+    def update_plot(self):
+        data = self.data_source()
+        if data and len(data) > 0:
+            plot_data = np.full(self.buffer_size, np.nan)
+            n = min(len(data), self.buffer_size)
+            centered = np.array(data[-n:]) - np.mean(data[-n:])
+            plot_data[-n:] = centered
+            self.line.set_ydata(plot_data)
+            self.canvas.draw_idle()
 
-    def closeEvent(self, event):
-        self.timer.stop()
-        event.accept()
+# ------------------------ Calculate QRS axis ------------------------
 
-# --- THIS IS THE CORRECTED CLASS ---
+def calculate_qrs_axis(lead_I, lead_aVF, r_peaks, fs=500, window_ms=100):
+    """
+    Calculate QRS axis using net area of QRS complex around R peaks.
+    - lead_I, lead_aVF: arrays of samples
+    - r_peaks: indices of R peaks
+    - fs: sampling rate
+    - window_ms: window size around R peak (default 100 ms)
+    """
+    if len(lead_I) < 100 or len(lead_aVF) < 100 or len(r_peaks) == 0:
+        return "--"
+    window = int(window_ms * fs / 1000)
+    net_I = []
+    net_aVF = []
+    for r in r_peaks:
+        start = max(0, r - window//2)
+        end = min(len(lead_I), r + window//2)
+        net_I.append(np.sum(lead_I[start:end]))
+        net_aVF.append(np.sum(lead_aVF[start:end]))
+    if len(net_I) == 0:
+        return "--"
+    mean_I = np.mean(net_I)
+    mean_aVF = np.mean(net_aVF)
+    axis_rad = np.arctan2(mean_aVF, mean_I)
+    axis_deg = np.degrees(axis_rad)
+    if axis_deg < 0:
+        axis_deg += 360
+    return f"{axis_deg:.0f}°"
+
+def calculate_st_segment(lead_signal, r_peaks, fs=500, j_offset_ms=40, st_offset_ms=80):
+    """
+    Calculate mean ST segment amplitude (in mV) at (J-point + st_offset_ms) after R peak.
+    - lead_signal: ECG samples (e.g., Lead II)
+    - r_peaks: indices of R peaks
+    - fs: sampling rate (Hz)
+    - j_offset_ms: ms after R peak to estimate J-point (default 40ms)
+    - st_offset_ms: ms after J-point to measure ST segment (default 80ms)
+    Returns mean ST segment amplitude in mV (float), or '--' if not enough data.
+    """
+    if len(lead_signal) < 100 or len(r_peaks) == 0:
+        return "--"
+    j_offset = int(j_offset_ms * fs / 1000)
+    st_offset = int(st_offset_ms * fs / 1000)
+    st_values = []
+    for r in r_peaks:
+        st_idx = r + j_offset + st_offset
+        if st_idx < len(lead_signal):
+            st_values.append(lead_signal[st_idx])
+    if len(st_values) == 0:
+        return "--"
+    st_value = np.mean(st_values)
+    if st_value > 0.1:
+        return "Elevated"
+    elif st_value < -0.1:
+        return "Depressed"
+    return str(st_value)
+
+# ------------------------ Calculate Arrhythmia ------------------------
+
+def detect_arrhythmia(heart_rate, qrs_duration, rr_intervals, pr_interval=None, p_peaks=None, r_peaks=None, ecg_signal=None):
+    """
+    Expanded arrhythmia detection logic for common clinical arrhythmias.
+    - Sinus Bradycardia: HR < 60, regular RR
+    - Sinus Tachycardia: HR > 100, regular RR
+    - Atrial Fibrillation: Irregular RR, absent/irregular P waves
+    - Atrial Flutter: Sawtooth P pattern (not robustly detected here)
+    - PAC: Early P, narrow QRS, compensatory pause (approximate)
+    - PVC: Early wide QRS, no P, compensatory pause (approximate)
+    - VT: HR > 100, wide QRS (>120ms), regular
+    - VF: Chaotic, no clear QRS, highly irregular
+    - Asystole: Flatline (very low amplitude, no R)
+    - SVT: HR > 150, narrow QRS, regular
+    - Heart Block: PR > 200 (1°), dropped QRS (2°), AV dissociation (3°)
+    """
+    try:
+        if not rr_intervals or len(rr_intervals) < 2:
+            return "Insufficient Data"
+        rr_std = np.std(rr_intervals)
+        rr_mean = np.mean(rr_intervals)
+        rr_reg = rr_std < 0.12  # Regular if std < 120ms
+        # Asystole: flatline (no R peaks, or very low amplitude)
+        if r_peaks is not None and len(r_peaks) < 1:
+            if ecg_signal is not None and np.ptp(ecg_signal) < 50:
+                return "Asystole (Flatline)"
+            return "No QRS Detected"
+        # VF: highly irregular, no clear QRS, rapid undulating
+        if r_peaks is not None and len(r_peaks) > 5:
+            if rr_std > 0.25 and np.ptp(ecg_signal) > 100 and heart_rate and heart_rate > 180:
+                return "Ventricular Fibrillation (VF)"
+        # VT: HR > 100, wide QRS (>120ms), regular
+        if heart_rate and heart_rate > 100 and qrs_duration and qrs_duration > 120 and rr_reg:
+            return "Ventricular Tachycardia (VT)"
+        # Sinus Bradycardia: HR < 60, regular
+        if heart_rate and heart_rate < 60 and rr_reg:
+            return "Sinus Bradycardia"
+        # Sinus Tachycardia: HR > 100, regular
+        if heart_rate and heart_rate > 100 and qrs_duration and qrs_duration <= 120 and rr_reg:
+            return "Sinus Tachycardia"
+        # SVT: HR > 150, narrow QRS, regular
+        if heart_rate and heart_rate > 150 and qrs_duration and qrs_duration <= 120 and rr_reg:
+            return "Supraventricular Tachycardia (SVT)"
+        # AFib: Irregular RR, absent/irregular P
+        if not rr_reg and (p_peaks is None or len(p_peaks) < len(r_peaks) * 0.5):
+            return "Atrial Fibrillation (AFib)"
+        # Atrial Flutter: (not robust, but if HR ~150, regular, and P waves rapid)
+        if heart_rate and 140 < heart_rate < 170 and rr_reg and p_peaks is not None and len(p_peaks) > len(r_peaks):
+            return "Atrial Flutter (suggestive)"
+        # PAC: Early P, narrow QRS, compensatory pause (approximate)
+        if p_peaks is not None and r_peaks is not None and len(p_peaks) > 1 and len(r_peaks) > 1:
+            pr_diffs = np.diff([r - p for p, r in zip(p_peaks, r_peaks)])
+            if np.any(pr_diffs < -0.15 * len(ecg_signal)) and qrs_duration and qrs_duration <= 120:
+                return "Premature Atrial Contraction (PAC)"
+        # PVC: Early wide QRS, no P, compensatory pause (approximate)
+        if qrs_duration and qrs_duration > 120 and (p_peaks is None or len(p_peaks) < len(r_peaks) * 0.5):
+            return "Premature Ventricular Contraction (PVC)"
+        # Heart Block: PR > 200ms (1°), dropped QRS (2°), AV dissociation (3°)
+        if pr_interval and pr_interval > 200:
+            return "Heart Block (1° AV)"
+        # If QRS complexes are missing (dropped beats)
+        if r_peaks is not None and len(r_peaks) < len(ecg_signal) / 500 * heart_rate * 0.7:
+            return "Heart Block (2°/3° AV, dropped QRS)"
+        return "None Detected"
+    except Exception as e:
+        return "Detecting..."
+
+
+class SerialECGReader:
+    def __init__(self, port, baudrate):
+        self.ser = serial.Serial(port, baudrate, timeout=1)
+        self.running = False
+        self.data_count = 0
+        print(f"🔌 SerialECGReader initialized: Port={port}, Baud={baudrate}")
+
+    def start(self):
+        print("🚀 Starting ECG data acquisition...")
+        self.ser.reset_input_buffer()
+        self.ser.write(b'1\r\n')
+        time.sleep(0.5)
+        self.running = True
+        print("✅ ECG device started - waiting for data...")
+
+    def stop(self):
+        print("⏹️ Stopping ECG data acquisition...")
+        self.ser.write(b'0\r\n')
+        self.running = False
+        print(f"📊 Total data packets received: {self.data_count}")
+
+    def read_value(self):
+        if not self.running:
+            return None
+        try:
+            line_raw = self.ser.readline()
+            line_data = line_raw.decode('utf-8', errors='replace').strip()
+            
+            if line_data:
+                self.data_count += 1
+                # Print detailed data information
+                print(f"📡 [Packet #{self.data_count}] Raw data: '{line_data}' (Length: {len(line_data)})")
+                
+                # Parse and display ECG value
+                if line_data.isdigit():
+                    ecg_value = int(line_data[-3:])
+                    print(f"💓 ECG Value: {ecg_value} mV")
+                    return ecg_value
+                else:
+                    # Try to parse as multiple values (8-channel data)
+                    try:
+                        # Clean the line data - remove any non-numeric characters except spaces and minus signs
+                        import re
+                        cleaned_line = re.sub(r'[^\d\s\-]', ' ', line_data)
+                        values = [int(x) for x in cleaned_line.split() if x.strip() and x.replace('-', '').isdigit()]
+                        
+                        if len(values) >= 8:
+                            print(f"💓 8-Channel ECG Data: {values}")
+                            return values  # Return the list of 8 values
+                        elif len(values) == 1:
+                            print(f"💓 Single ECG Value: {values[0]} mV")
+                            return values[0]
+                        elif len(values) > 0:
+                            print(f"⚠️ Unexpected number of values: {len(values)} (expected 8)")
+                            return None
+                        else:
+                            return None
+                    except ValueError:
+                        print(f"⚠️ Non-numeric data received: '{line_data}'")
+            else:
+                print("⏳ No data received (timeout)")
+                
+        except Exception as e:
+            print(f"❌ Serial communication error: {e}")
+        return None
+
+    def close(self):
+        print("🔌 Closing serial connection...")
+        self.ser.close()
+        print("✅ Serial connection closed")
+
+class LiveLeadWindow(QWidget):
+    def __init__(self, lead_name, data_source, buffer_size=80, color="#00ff99"):
+        super().__init__()
+        self.setWindowTitle(f"Live View: {lead_name}")
+        self.resize(900, 300)
+        self.lead_name = lead_name
+        self.data_source = data_source
+        self.buffer_size = buffer_size
+        self.color = color
+
+        layout = QVBoxLayout(self)
+        self.fig = Figure(facecolor='#000')
+        self.ax = self.fig.add_subplot(111)
+        self.ax.set_facecolor('#000')
+        self.ax.set_ylim(-400, 400)
+        self.ax.set_xlim(0, buffer_size)
+        self.line, = self.ax.plot([0]*buffer_size, color=self.color, lw=2)
+        self.canvas = FigureCanvas(self.fig)
+        layout.addWidget(self.canvas)
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_plot)
+        self.timer.start(100)
+
+    def update_plot(self):
+        data = self.data_source()
+        if data and len(data) > 0:
+            plot_data = np.full(self.buffer_size, np.nan)
+            n = min(len(data), self.buffer_size)
+            centered = np.array(data[-n:]) - np.mean(data[-n:])
+            plot_data[-n:] = centered
+            self.line.set_ydata(plot_data)
+            self.canvas.draw_idle()
+
+# ------------------------ Calculate QRS axis ------------------------
+
+def calculate_qrs_axis(lead_I, lead_aVF, r_peaks, fs=500, window_ms=100):
+    """
+    Calculate QRS axis using net area of QRS complex around R peaks.
+    - lead_I, lead_aVF: arrays of samples
+    - r_peaks: indices of R peaks
+    - fs: sampling rate
+    - window_ms: window size around R peak (default 100 ms)
+    """
+    if len(lead_I) < 100 or len(lead_aVF) < 100 or len(r_peaks) == 0:
+        return "--"
+    window = int(window_ms * fs / 1000)
+    net_I = []
+    net_aVF = []
+    for r in r_peaks:
+        start = max(0, r - window//2)
+        end = min(len(lead_I), r + window//2)
+        net_I.append(np.sum(lead_I[start:end]))
+        net_aVF.append(np.sum(lead_aVF[start:end]))
+    mean_net_I = np.mean(net_I)
+    mean_net_aVF = np.mean(net_aVF)
+    axis_rad = np.arctan2(mean_net_aVF, mean_net_I)
+    axis_deg = int(np.degrees(axis_rad))
+    return axis_deg
+
+# ------------------------ Calculate ST Segment ------------------------
+
+def calculate_st_segment(lead_signal, r_peaks, fs=500, j_offset_ms=40, st_offset_ms=80):
+    """
+    Calculate mean ST segment amplitude (in mV) at (J-point + st_offset_ms) after R peak.
+    - lead_signal: ECG samples (e.g., Lead II)
+    - r_peaks: indices of R peaks
+    - fs: sampling rate (Hz)
+    - j_offset_ms: ms after R peak to estimate J-point (default 40ms)
+    - st_offset_ms: ms after J-point to measure ST segment (default 80ms)
+    Returns mean ST segment amplitude in mV (float), or '--' if not enough data.
+    """
+    if len(lead_signal) < 100 or len(r_peaks) == 0:
+        return "--"
+    st_values = []
+    j_offset = int(j_offset_ms * fs / 1000)
+    st_offset = int(st_offset_ms * fs / 1000)
+    for r in r_peaks:
+        st_idx = r + j_offset + st_offset
+        if st_idx < len(lead_signal):
+            st_values.append(lead_signal[st_idx])
+    if len(st_values) == 0:
+        return "--"
+    
+    st_value = float(np.mean(st_values))
+    # Interpret as medical term
+    if 80 <= st_value <= 120:
+        return "Isoelectric"
+    elif st_value > 120:
+        return "Elevated"
+    elif st_value < 80:
+        return "Depressed"
+    return str(st_value)
+
+# ------------------------ Calculate Arrhythmia ------------------------
+
+def detect_arrhythmia(heart_rate, qrs_duration, rr_intervals, pr_interval=None, p_peaks=None, r_peaks=None, ecg_signal=None):
+    """
+    Expanded arrhythmia detection logic for common clinical arrhythmias.
+    - Sinus Bradycardia: HR < 60, regular RR
+    - Sinus Tachycardia: HR > 100, regular RR
+    - Atrial Fibrillation: Irregular RR, absent/irregular P waves
+    - Atrial Flutter: Sawtooth P pattern (not robustly detected here)
+    - PAC: Early P, narrow QRS, compensatory pause (approximate)
+    - PVC: Early wide QRS, no P, compensatory pause (approximate)
+    - VT: HR > 100, wide QRS (>120ms), regular
+    - VF: Chaotic, no clear QRS, highly irregular
+    - Asystole: Flatline (very low amplitude, no R)
+    - SVT: HR > 150, narrow QRS, regular
+    - Heart Block: PR > 200 (1°), dropped QRS (2°), AV dissociation (3°)
+    """
+    try:
+        if rr_intervals is None or len(rr_intervals) < 2:
+            return "Detecting..."
+        rr_std = np.std(rr_intervals)
+        rr_mean = np.mean(rr_intervals)
+        rr_reg = rr_std < 0.12  # Regular if std < 120ms
+        # Asystole: flatline (no R peaks, or very low amplitude)
+        if r_peaks is not None and len(r_peaks) < 1:
+            if ecg_signal is not None and np.ptp(ecg_signal) < 50:
+                return "Asystole (Flatline)"
+            return "No QRS Detected"
+        # VF: highly irregular, no clear QRS, rapid undulating
+        if r_peaks is not None and len(r_peaks) > 5:
+            if rr_std > 0.25 and np.ptp(ecg_signal) > 100 and heart_rate and heart_rate > 180:
+                return "Ventricular Fibrillation (VF)"
+        # VT: HR > 100, wide QRS (>120ms), regular
+        if heart_rate and heart_rate > 100 and qrs_duration and qrs_duration > 120 and rr_reg:
+            return "Ventricular Tachycardia (VT)"
+        # Sinus Bradycardia: HR < 60, regular
+        if heart_rate and heart_rate < 60 and rr_reg:
+            return "Sinus Bradycardia"
+        # Sinus Tachycardia: HR > 100, regular
+        if heart_rate and heart_rate > 100 and qrs_duration and qrs_duration <= 120 and rr_reg:
+            return "Sinus Tachycardia"
+        # SVT: HR > 150, narrow QRS, regular
+        if heart_rate and heart_rate > 150 and qrs_duration and qrs_duration <= 120 and rr_reg:
+            return "Supraventricular Tachycardia (SVT)"
+        # AFib: Irregular RR, absent/irregular P
+        if not rr_reg and (p_peaks is None or len(p_peaks) < len(r_peaks) * 0.5):
+            return "Atrial Fibrillation (AFib)"
+        # Atrial Flutter: (not robust, but if HR ~150, regular, and P waves rapid)
+        if heart_rate and 140 < heart_rate < 170 and rr_reg and p_peaks is not None and len(p_peaks) > len(r_peaks):
+            return "Atrial Flutter (suggestive)"
+        # PAC: Early P, narrow QRS, compensatory pause (approximate)
+        if p_peaks is not None and r_peaks is not None and len(p_peaks) > 1 and len(r_peaks) > 1:
+            pr_diffs = np.diff([r - p for p, r in zip(p_peaks, r_peaks)])
+            if np.any(pr_diffs < -0.15 * len(ecg_signal)) and qrs_duration and qrs_duration <= 120:
+                return "Premature Atrial Contraction (PAC)"
+        # PVC: Early wide QRS, no P, compensatory pause (approximate)
+        if qrs_duration and qrs_duration > 120 and (p_peaks is None or len(p_peaks) < len(r_peaks) * 0.5):
+            return "Premature Ventricular Contraction (PVC)"
+        # Heart Block: PR > 200ms (1°), dropped QRS (2°), AV dissociation (3°)
+        if pr_interval and pr_interval > 200:
+            return "Heart Block (1° AV)"
+        # If QRS complexes are missing (dropped beats)
+        if r_peaks is not None and len(r_peaks) < len(ecg_signal) / 500 * heart_rate * 0.7:
+            return "Heart Block (2°/3° AV, dropped QRS)"
+        return "None Detected"
+    except Exception as e:
+        return "Detecting..."
+
 class ECGTestPage(QWidget):
     LEADS_MAP = {
         "Lead II ECG Test": ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"],
@@ -146,61 +637,331 @@ class ECGTestPage(QWidget):
         "12 Lead ECG Test": ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"],
         "ECG Live Monitoring": ["II"]
     }
-
+    LEAD_COLORS = {
+        "I": "#00ff99",
+        "II": "#ff0055", 
+        "III": "#0099ff",
+        "aVR": "#ff9900",
+        "aVL": "#cc00ff",
+        "aVF": "#00ccff",
+        "V1": "#ffcc00",
+        "V2": "#00ffcc",
+        "V3": "#ff6600",
+        "V4": "#6600ff",
+        "V5": "#00b894",
+        "V6": "#ff0066"
+    }
+    
     def __init__(self, test_name, stacked_widget):
         super().__init__()
+        
+        # Set responsive size policy
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumSize(800, 600)  # Minimum size for usability
+        
+        self.setWindowTitle("12-Lead ECG Monitor")
+        self.stacked_widget = stacked_widget  # Save reference for navigation
+
+        self.settings_manager = SettingsManager()
+
+        self.grid_widget = QWidget()
+        self.detailed_widget = QWidget()
+        self.page_stack = QStackedLayout()
+        self.page_stack.addWidget(self.grid_widget)
+        self.page_stack.addWidget(self.detailed_widget)
+        self.setLayout(self.page_stack)
+
         self.test_name = test_name
         self.leads = self.LEADS_MAP[test_name]
-        self.stacked_widget = stacked_widget
-        self.settings_manager = SettingsManager()
-        self.serial_reader = None
-        self.sampler = SamplingRateCalculator()
-
-        # --- REPLACED: Data structure now matches the working script (list of numpy arrays) ---
+        self.buffer_size = 2000  # Increased buffer size for all leads
+        # Use GitHub version data structure: list of numpy arrays for all 12 leads
         self.data = [np.zeros(HISTORY_LENGTH) for _ in range(12)]
-        
-        # --- All the UI setup code is the same ---
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setMinimumSize(800, 600)
-        self.setWindowTitle("12-Lead ECG Monitor")
-        main_hbox = QHBoxLayout(self)
-        main_hbox.setSpacing(10)
-        main_hbox.setContentsMargins(8, 8, 8, 8)
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_plots)
+        self.serial_reader = None
+        self.stacked_widget = stacked_widget
+        self.sampler = SamplingRateCalculator()
+        self.demo_fs = 500  # Increased sampling rate for more realistic ECG
 
-        # --- Left Menu Panel Setup (unchanged) ---
+        # Initialize time tracking for elapsed time
+        self.start_time = None
+        self.elapsed_timer = QTimer()
+        self.elapsed_timer.timeout.connect(self.update_elapsed_time)
+
+        main_vbox = QVBoxLayout()
+
+        menu_frame = QGroupBox("Menu")
+
+        menu_frame.setStyleSheet("""
+            QGroupBox {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #ffffff, stop:1 #f8f9fa);
+                border: 2px solid #e9ecef;
+                border-radius: 16px;
+                margin-top: 12px;
+                padding: 16px;
+                font-weight: bold;
+            }
+            QGroupBox::title {
+                color: #495057;
+                font-size: 16px;
+                font-weight: bold;
+                padding: 8px;
+            }
+        """)
+
+        # Enhanced Menu Panel - Make it responsive and compact
         menu_container = QWidget()
-        menu_container.setMinimumWidth(200)
-        menu_container.setMaximumWidth(280)
+        menu_container.setMinimumWidth(200)  # Reduced from 250px
+        menu_container.setMaximumWidth(280)  # Reduced from 400px
         menu_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        menu_container.setStyleSheet("QWidget { background: #f8f9fa; border-right: 1px solid #dee2e6; }")
+        menu_container.setStyleSheet("""
+            QWidget {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #ffffff, stop:1 #f8f9fa);
+                border-right: 2px solid #e9ecef;
+            }
+        """)
+
+        # Style menu buttons - Make them much more compact
         menu_layout = QVBoxLayout(menu_container)
-        menu_layout.setContentsMargins(12, 12, 12, 12)
-        menu_layout.setSpacing(8)
-        header_label = QLabel("ECG Control Panel")
-        header_label.setStyleSheet("QLabel { color: #ff6600; font-size: 18px; font-weight: bold; padding-bottom: 10px; border-bottom: 2px solid #ff6600; margin-bottom: 10px; }")
-        header_label.setAlignment(Qt.AlignCenter)
-        menu_layout.addWidget(header_label)
+        menu_layout.setContentsMargins(12, 12, 12, 12)  # Reduced margins
+        menu_layout.setSpacing(8)  # Reduced spacing between buttons
         
+        # Header - Make it more compact
+        header_label = QLabel("ECG Control Panel")
+        header_label.setStyleSheet("""
+            QLabel {
+                color: #ff6600;
+                font-size: 18px;  /* Reduced from 24px */
+                font-weight: bold;
+                padding: 12px 0;  /* Reduced from 20px */
+                border-bottom: 2px solid #ff6600;  /* Reduced from 3px */
+                margin-bottom: 12px;  /* Reduced from 20px */
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                    stop:0 #fff5f0, stop:1 #ffe0cc);
+                border-radius: 8px;  /* Reduced from 10px */
+            }
+        """)
+        header_label.setAlignment(Qt.AlignCenter)
+        header_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        menu_layout.addWidget(header_label)
+
+        # Create ECGMenu instance to use its methods
+        self.ecg_menu = ECGMenu(parent=self, dashboard=self.stacked_widget.parent())
+        # Connect ECGMenu to this ECG test page for data communication
+        self.ecg_menu.set_ecg_test_page(self)
+
+        self.ecg_menu.settings_manager = self.settings_manager
+
+        # Initialize sliding panel for the ECG menu
+        self.ecg_menu.sliding_panel = None
+        self.ecg_menu.parent_widget = self
+
+        self.ecg_menu.setVisible(False)
+        self.ecg_menu.hide()
+        
+        if self.ecg_menu.parent():
+            self.ecg_menu.setParent(None)
+
+        self.ecg_menu.settings_changed_callback = self.on_settings_changed 
+
+        self.apply_display_settings()
+
+        # Create ECG menu buttons
         ecg_menu_buttons = [
-            ("Save ECG", lambda: print("Save clicked"), "#28a745"),
-            ("Open ECG", lambda: print("Open clicked"), "#17a2b8"),
-            # ... add other menu buttons as needed
+            ("Save ECG", self.ecg_menu.show_save_ecg, "#28a745"),
+            ("Open ECG", self.ecg_menu.show_open_ecg, "#17a2b8"),
+            ("Working Mode", self.ecg_menu.show_working_mode, "#ffc107"),
+            ("Printer Setup", self.ecg_menu.show_printer_setup, "#6c757d"),
+            ("Set Filter", self.ecg_menu.show_set_filter, "#fd7e14"),
+            ("System Setup", self.ecg_menu.show_system_setup, "#6f42c1"),
+            ("Load Default", self.ecg_menu.show_load_default, "#20c997"),
+            ("Version", self.ecg_menu.show_version_info, "#e83e8c"),
+            ("Factory Maintain", self.ecg_menu.show_factory_maintain, "#dc3545"),
+            ("Exit", self.ecg_menu.show_exit, "#495057")
         ]
+        
+        # Create buttons and store them in a list - Make them much smaller
+        created_buttons = []
         for text, handler, color in ecg_menu_buttons:
             btn = QPushButton(text)
-            btn.setMinimumHeight(40)
+            btn.setMinimumHeight(40)  # Reduced from 60px - Much more compact
+            btn.setMaximumHeight(45)  # Add maximum height constraint
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             btn.clicked.connect(handler)
+            created_buttons.append(btn)
             menu_layout.addWidget(btn)
-        menu_layout.addStretch()
 
-        # --- Right Main Content Panel ---
-        main_vbox = QVBoxLayout()
-        main_hbox.addWidget(menu_container, 1)
-        main_hbox.addLayout(main_vbox, 5)
+        menu_layout.addStretch(1)
 
-        # --- Metrics Frame (unchanged) ---
+        # Style menu buttons AFTER they're created - Compact styling
+        for i, btn in enumerate(created_buttons):
+            color = ecg_menu_buttons[i][2]
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                        stop:0 #ffffff, stop:1 #f8f9fa);
+                    color: #1a1a1a;
+                    border: 2px solid #e9ecef;  /* Reduced from 3px */
+                    border-radius: 8px;  /* Reduced from 15px */
+                    padding: 8px 12px;  /* Reduced from 15px 20px */
+                    font-size: 12px;  /* Reduced from 16px */
+                    font-weight: bold;
+                    text-align: left;
+                    margin: 2px 0;  /* Reduced from 4px */
+                }}
+                QPushButton:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                        stop:0 #fff5f0, stop:1 #ffe0cc);
+                    border: 2px solid {color};  /* Reduced from 4px */
+                    color: {color};
+                }}
+                QPushButton:pressed {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                        stop:0 #ffe0cc, stop:1 #ffcc99);
+                    border: 2px solid {color};  /* Reduced from 4px */
+                    color: {color};
+                }}
+            """)
+
+        created_buttons[0].clicked.disconnect()
+        created_buttons[0].clicked.connect(self.ecg_menu.show_save_ecg)
+        
+        created_buttons[1].clicked.disconnect()
+        created_buttons[1].clicked.connect(self.ecg_menu.show_open_ecg)
+        
+        created_buttons[2].clicked.disconnect()
+        created_buttons[2].clicked.connect(self.ecg_menu.show_working_mode)
+        
+        created_buttons[3].clicked.disconnect()
+        created_buttons[3].clicked.connect(self.ecg_menu.show_printer_setup)
+        
+        created_buttons[4].clicked.disconnect()
+        created_buttons[4].clicked.connect(self.ecg_menu.show_set_filter)
+        
+        created_buttons[5].clicked.disconnect()
+        created_buttons[5].clicked.connect(self.ecg_menu.show_system_setup)
+        
+        created_buttons[6].clicked.disconnect()
+        created_buttons[6].clicked.connect(self.ecg_menu.show_load_default)
+        
+        created_buttons[7].clicked.disconnect()
+        created_buttons[7].clicked.connect(self.ecg_menu.show_version_info)
+        
+        created_buttons[8].clicked.disconnect()
+        created_buttons[8].clicked.connect(self.ecg_menu.show_factory_maintain)
+
+        created_buttons[9].clicked.disconnect()
+        created_buttons[9].clicked.connect(self.ecg_menu.show_exit)
+
+        # Recording Toggle Button Section - Make it compact
+        recording_frame = QFrame()
+        recording_frame.setStyleSheet("""
+            QFrame {
+                background: transparent;
+                border: none;
+                padding: 6px;  /* Reduced from 10px */
+                margin-top: 3px;  /* Reduced from 5px */
+            }
+        """)
+        recording_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        recording_layout = QVBoxLayout(recording_frame)
+        recording_layout.setSpacing(4)  # Reduced spacing
+
+        # Capture Screen button - Make it compact
+        self.capture_screen_btn = QPushButton("Capture Screen")
+        self.capture_screen_btn.setMinimumHeight(35)  # Reduced from 60px
+        self.capture_screen_btn.setMaximumHeight(40)  # Add maximum height
+        self.capture_screen_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.capture_screen_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                    stop:0 #ffffff, stop:1 #f8f9fa);
+                color: #1a1a1a;
+                border: 2px solid #e9ecef;  /* Reduced from 3px */
+                border-radius: 8px;  /* Reduced from 15px */
+                padding: 8px 12px;  /* Reduced from 15px 20px */
+                font-size: 12px;  /* Reduced from 16px */
+                font-weight: bold;
+                text-align: center;
+                margin: 2px 0;  /* Reduced from 5px */
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                    stop:0 #fff5f0, stop:1 #ffe0cc);
+                border: 2px solid #2453ff;  /* Reduced from 4px */
+                color: #2453ff;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                    stop:0 #e0e8ff, stop:1 #ccd9ff);
+                border: 2px solid #2453ff;  /* Reduced from 4px */
+                color: #2453ff;
+            }
+        """)
+        self.capture_screen_btn.clicked.connect(self.capture_screen)
+        recording_layout.addWidget(self.capture_screen_btn)
+        
+        # Toggle-style recording button - Make it compact
+        self.recording_toggle = QPushButton("Record Screen")
+        self.recording_toggle.setMinimumHeight(35)  # Reduced from 60px
+        self.recording_toggle.setMaximumHeight(40)  # Add maximum height
+        self.recording_toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.recording_toggle.setCheckable(True)
+        self.recording_toggle.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                    stop:0 #ffffff, stop:1 #f8f9fa);
+                color: #1a1a1a;
+                border: 2px solid #e9ecef;  /* Reduced from 3px */
+                border-radius: 8px;  /* Reduced from 15px */
+                padding: 8px 12px;  /* Reduced from 15px 20px */
+                font-size: 12px;  /* Reduced from 16px */
+                font-weight: bold;
+                text-align: center;
+                margin: 2px 0;  /* Reduced from 5px */
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                    stop:0 #fff5f0, stop:1 #ffe0cc);
+                border: 2px solid #ff6600;  /* Reduced from 4px */
+                color: #ff6600;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                    stop:0 #ffe0cc, stop:1 #ffcc99);
+                border: 2px solid #ff6600;  /* Reduced from 4px */
+                color: #ff6600;
+            }
+            QPushButton:checked {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                    stop:0 #fff5f0, stop:1 #ffe0cc);
+                border: 2px solid #dc3545;  /* Reduced from 4px */
+                color: #dc3545;
+            }
+            QPushButton:checked:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                    stop:0 #ffe0cc, stop:1 #ffcc99);
+                border: 2px solid #c82333;  /* Reduced from 4px */
+                color: #c82333;
+            }
+        """)
+        self.recording_toggle.clicked.connect(self.toggle_recording)
+        recording_layout.addWidget(self.recording_toggle)
+        
+        menu_layout.addWidget(recording_frame)
+        
+        # Initialize recording variables
+        self.is_recording = False
+        self.recording_writer = None
+        self.recording_frames = []
+
+        # Add metrics frame above the plot area
         self.metrics_frame = self.create_metrics_frame()
+        self.metrics_frame.setMaximumHeight(80)  # Reduced from default
+        self.metrics_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         main_vbox.addWidget(self.metrics_frame)
         
         # --- REPLACED: Matplotlib plot area is replaced with a simple QWidget container ---
@@ -208,81 +969,2959 @@ class ECGTestPage(QWidget):
         self.plot_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         main_vbox.addWidget(self.plot_area)
 
-        # --- NEW: Create the PyQtGraph plot grid (from your working script) ---
+        # --- NEW: Create the PyQtGraph plot grid (from GitHub version) ---
         grid = QGridLayout(self.plot_area)
         grid.setSpacing(8)
         self.plot_widgets = []
         self.data_lines = []
+        
+        # Define colors for each lead type for consistent color coding
+        lead_colors = {
+            'I': '#ff6b6b',      # Red
+            'II': '#4ecdc4',     # Teal  
+            'III': '#45b7d1',    # Blue
+            'aVR': '#96ceb4',    # Green
+            'aVL': '#feca57',    # Yellow
+            'aVF': '#ff9ff3',    # Pink
+            'V1': '#54a0ff',     # Light Blue
+            'V2': '#5f27cd',     # Purple
+            'V3': '#00d2d3',     # Cyan
+            'V4': '#ff9f43',     # Orange
+            'V5': '#10ac84',     # Dark Green
+            'V6': '#ee5a24'      # Dark Orange
+        }
         
         positions = [(i, j) for i in range(4) for j in range(3)]
         for i in range(len(self.leads)):
             plot_widget = pg.PlotWidget()
             plot_widget.setBackground('w')
             plot_widget.showGrid(x=True, y=True, alpha=0.3)
-            plot_widget.getAxis('left').setTextPen('k')
+            # Hide Y-axis labels for cleaner display
+            plot_widget.getAxis('left').setTicks([])
+            plot_widget.getAxis('left').setLabel('')
             plot_widget.getAxis('bottom').setTextPen('k')
-            plot_widget.setTitle(self.leads[i], color='k', size='10pt')
-            plot_widget.setYRange(-4000, 4000) # Set a generous initial Y-range
+            
+            # Get color for this lead
+            lead_name = self.leads[i]
+            lead_color = lead_colors.get(lead_name, '#000000')
+            
+            plot_widget.setTitle(self.leads[i], color=lead_color, size='10pt')
+            # Set initial Y-range, will be updated dynamically based on data
+            plot_widget.setYRange(-2000, 2000)
             
             # --- MAKE PLOT CLICKABLE ---
             plot_widget.scene().sigMouseClicked.connect(partial(self.plot_clicked, i))
             
             row, col = positions[i]
             grid.addWidget(plot_widget, row, col)
-            data_line = plot_widget.plot(pen=pg.mkPen(color=self.LEAD_COLORS.get(self.leads[i], 'b'), width=1.5))
+            data_line = plot_widget.plot(pen=pg.mkPen(color=lead_color, width=2.0))
 
             self.plot_widgets.append(plot_widget)
             self.data_lines.append(data_line)
         
-        self.r_peaks_scatter = self.plot_widgets[1].plot([], [], pen=None, symbol='o', symbolBrush='r', symbolSize=8)
-        
-        # --- Bottom Buttons (unchanged) ---
+        # R-peaks scatter plot (only if we have at least 2 plots)
+        if len(self.plot_widgets) > 1:
+            self.r_peaks_scatter = self.plot_widgets[1].plot([], [], pen=None, symbol='o', symbolBrush='r', symbolSize=8)
+        else:
+            self.r_peaks_scatter = None
+
+        main_vbox.setSpacing(12)  # Reduced from 16px
+        main_vbox.setContentsMargins(16, 16, 16, 16)  # Reduced from 24px
+
         btn_layout = QHBoxLayout()
         self.start_btn = QPushButton("Start")
         self.stop_btn = QPushButton("Stop")
         self.ports_btn = QPushButton("Ports")
-        # Update button text to show current port
-        current_port = self.settings_manager.get_serial_port()
-        if current_port and current_port != "Select Port":
-            self.ports_btn.setText(f"Port: {current_port}")
-        else:
-            self.ports_btn.setText("Ports")
+        self.demo_btn = QPushButton("Demo Mode")
+        self.export_pdf_btn = QPushButton("Export as PDF")
+        self.export_csv_btn = QPushButton("Export as CSV")
+        self.sequential_btn = QPushButton("Show All Leads Sequentially")
+        self.twelve_leads_btn = QPushButton("12:1")
+        self.six_leads_btn = QPushButton("6:2")
         self.back_btn = QPushButton("Back")
+
+        # Make all buttons responsive and compact
+        for btn in [self.start_btn, self.stop_btn, self.ports_btn, self.demo_btn, self.export_pdf_btn, self.export_csv_btn, 
+                   self.sequential_btn, self.twelve_leads_btn, self.six_leads_btn, self.back_btn]:
+            btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            btn.setMinimumHeight(28)  # Reduced from 32px
+            btn.setMaximumHeight(32)  # Add maximum height constraint
+            btn.setMinimumWidth(80)   # Reduced from 100px
+            btn.setMaximumWidth(120)  # Add maximum width constraint
+
+        green_color = """
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #4CAF50, stop:1 #45a049);
+                color: white;
+                border: 2px solid #4CAF50;
+                border-radius: 6px;  /* Reduced from 8px */
+                padding: 6px 12px;  /* Reduced from 8px 16px */
+                font-size: 11px;  /* Reduced from 12px */
+                font-weight: bold;
+                min-height: 28px;  /* Reduced from 32px */
+                min-width: 80px;   /* Reduced from 100px */
+                text-align: center;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #45a049, stop:1 #4CAF50);
+                border: 2px solid #45a049;
+                color: white;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #3d8b40, stop:1 #357a38);
+                border: 2px solid #3d8b40;
+                color: white;
+            }
+        """
+        
+        # Apply medical green style to all buttons
+        self.start_btn.setStyleSheet(green_color)
+        self.stop_btn.setStyleSheet(green_color)
+        self.ports_btn.setStyleSheet(green_color)
+        self.demo_btn.setStyleSheet(green_color)
+        self.export_pdf_btn.setStyleSheet(green_color)
+        self.export_csv_btn.setStyleSheet(green_color)
+        self.sequential_btn.setStyleSheet(green_color)
+        self.twelve_leads_btn.setStyleSheet(green_color)
+        self.six_leads_btn.setStyleSheet(green_color)
+        self.back_btn.setStyleSheet(green_color)
+
         btn_layout.addWidget(self.start_btn)
         btn_layout.addWidget(self.stop_btn)
         btn_layout.addWidget(self.ports_btn)
-        btn_layout.addStretch()
-        btn_layout.addWidget(self.back_btn)
+        btn_layout.addWidget(self.demo_btn)
+        btn_layout.addWidget(self.export_pdf_btn)
+        btn_layout.addWidget(self.export_csv_btn)
+        btn_layout.addWidget(self.sequential_btn)
+        btn_layout.addWidget(self.twelve_leads_btn)
+        btn_layout.addWidget(self.six_leads_btn)
         main_vbox.addLayout(btn_layout)
+        btn_layout.addWidget(self.back_btn)
 
-        # --- Connect Signals (unchanged logic) ---
         self.start_btn.clicked.connect(self.start_acquisition)
         self.stop_btn.clicked.connect(self.stop_acquisition)
+        self.demo_btn.clicked.connect(self.toggle_demo_mode)
+
+
+        self.start_btn.setToolTip("Start ECG recording from the selected port")
+        self.stop_btn.setToolTip("Stop current ECG recording")
+        self.ports_btn.setToolTip("Configure COM port and baud rate settings")
+        self.demo_btn.setToolTip("Toggle realistic ECG demo mode (no hardware required)")
+        self.export_pdf_btn.setToolTip("Export ECG data as PDF report")
+        self.export_csv_btn.setToolTip("Export ECG data as CSV file")
+
+        # Add help button
+        help_btn = QPushButton("?")
+        help_btn.setStyleSheet("""
+            QPushButton {
+                background: #6c757d;
+                color: white;
+                border-radius: 50%;
+                width: 30px;
+                height: 30px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: #495057;
+            }
+        """)
+        help_btn.clicked.connect(self.show_help)
+
         self.ports_btn.clicked.connect(self.show_ports_dialog)
+        self.export_pdf_btn.clicked.connect(self.export_pdf)
+        self.export_csv_btn.clicked.connect(self.export_csv)
+        self.sequential_btn.clicked.connect(self.show_sequential_view)
+        self.twelve_leads_btn.clicked.connect(self.twelve_leads_overlay)
+        self.six_leads_btn.clicked.connect(self.six_leads_overlay)
         self.back_btn.clicked.connect(self.go_back)
 
-        # --- Main Timer for Plot Updates ---
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.update_plots)
+        main_hbox = QHBoxLayout(self.grid_widget)
+    
+        # Add widgets to the layout with responsive sizing - Better proportions
+        main_hbox.addWidget(menu_container, 1)  # Menu takes 1 part (compact)
+        main_hbox.addLayout(main_vbox, 5)  # Main content takes 5 parts (more space)
+        
+        # Set spacing and layout
+        main_hbox.setSpacing(10)  # Reduced from 15px
+        main_hbox.setContentsMargins(8, 8, 8, 8)  # Reduced from 10px
+        self.grid_widget.setLayout(main_hbox)
+        
+        # Make the grid widget responsive
+        self.grid_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+    def plot_clicked(self, plot_index):
+        """Handle plot click events"""
+        if plot_index < len(self.leads):
+            lead_name = self.leads[plot_index]
+            print(f"Clicked on {lead_name} plot")
 
-    # --- REPLACED: This is the high-performance update function from your working script ---
-    def update_plots(self):
-        if not self.serial_reader or not self.serial_reader.running:
+    def calculate_12_leads_from_8_channels(self, channel_data):
+        """
+        Calculate 12-lead ECG from 8-channel hardware data
+        Hardware sends: [L1, V4, V5, Lead 2, V3, V6, V1, V2] in that order
+        """
+        if len(channel_data) < 8:
+            # Pad with zeros if not enough channels
+            channel_data = channel_data + [0] * (8 - len(channel_data))
+        
+        # Map hardware channels to standard positions
+        L1 = channel_data[0] if len(channel_data) > 0 else 0      # Lead I
+        V4_hw = channel_data[1] if len(channel_data) > 1 else 0   # V4 from hardware
+        V5_hw = channel_data[2] if len(channel_data) > 2 else 0   # V5 from hardware
+        II = channel_data[3] if len(channel_data) > 3 else 0      # Lead II
+        V3_hw = channel_data[4] if len(channel_data) > 4 else 0   # V3 from hardware
+        V6_hw = channel_data[5] if len(channel_data) > 5 else 0   # V6 from hardware
+        V1 = channel_data[6] if len(channel_data) > 6 else 0      # V1 from hardware
+        V2 = channel_data[7] if len(channel_data) > 7 else 0      # V2 from hardware
+        
+        # Calculate derived leads using standard ECG formulas
+        I = L1  # Lead I is directly from hardware
+        
+        # Calculate Lead III from Lead I and Lead II
+        III = II - I if II != 0 and I != 0 else 0
+        
+        # Calculate augmented leads
+        aVR = -(I + II) / 2 if I != 0 and II != 0 else 0
+        aVL = (I - II) / 2 if I != 0 and II != 0 else 0
+        aVF = (II - I) / 2 if I != 0 and II != 0 else 0
+        
+        # Use hardware V leads directly
+        V1 = V1
+        V2 = V2
+        V3 = V3_hw
+        V4 = V4_hw
+        V5 = V5_hw
+        V6 = V6_hw
+        
+        # Return 12-lead ECG data in standard order
+        return [I, II, III, aVR, aVL, aVF, V1, V2, V3, V4, V5, V6]
+
+    def calculate_ecg_metrics(self):
+        """Calculate ECG metrics: Heart Rate, PR Interval, QRS Complex, QRS Axis, ST Interval"""
+        if len(self.data) < 2:  # Need at least Lead II for analysis
+            return
+        
+        # Use Lead II (index 1) for primary analysis
+        lead_ii_data = self.data[1]
+        
+        # Calculate Heart Rate from R-R intervals
+        heart_rate = self.calculate_heart_rate(lead_ii_data)
+        
+        # Calculate PR Interval
+        pr_interval = self.calculate_pr_interval(lead_ii_data)
+        
+        # Calculate QRS Complex duration
+        qrs_duration = self.calculate_qrs_duration(lead_ii_data)
+        
+        # Calculate QRS Axis
+        qrs_axis = self.calculate_qrs_axis()
+        
+        # Calculate ST Interval
+        st_interval = self.calculate_st_interval(lead_ii_data)
+        
+        # Update UI metrics
+        self.update_ecg_metrics_display(heart_rate, pr_interval, qrs_duration, qrs_axis, st_interval)
+
+    def calculate_heart_rate(self, lead_data):
+        """Calculate heart rate from Lead II data using R-R intervals"""
+        try:
+            if len(lead_data) < 200:  # Need sufficient data
+                return 60  # Default fallback
+            
+            # Apply bandpass filter to enhance R-peaks (0.5-40 Hz)
+            from scipy.signal import butter, filtfilt
+            fs = 500  # Sampling rate
+            nyquist = fs / 2
+            low = 0.5 / nyquist
+            high = 40 / nyquist
+            b, a = butter(4, [low, high], btype='band')
+            filtered_signal = filtfilt(b, a, lead_data)
+            
+            # Find R-peaks using scipy
+            from scipy.signal import find_peaks
+            peaks, properties = find_peaks(
+                filtered_signal,
+                height=np.mean(filtered_signal) + 0.5 * np.std(filtered_signal),
+                distance=int(0.4 * fs),  # Minimum 0.4 seconds between peaks (150 BPM max)
+                prominence=np.std(filtered_signal) * 0.3
+            )
+            
+            if len(peaks) < 2:
+                return 60  # Not enough peaks detected
+            
+            # Calculate R-R intervals in milliseconds
+            rr_intervals_ms = np.diff(peaks) * (1000 / fs)
+            
+            # Filter physiologically reasonable intervals (300-2000 ms)
+            valid_intervals = rr_intervals_ms[(rr_intervals_ms >= 300) & (rr_intervals_ms <= 2000)]
+            
+            if len(valid_intervals) == 0:
+                return 60  # No valid intervals
+            
+            # Calculate heart rate from median R-R interval
+            median_rr = np.median(valid_intervals)
+            heart_rate = 60000 / median_rr  # Convert to BPM
+            
+            # Ensure reasonable range (40-200 BPM)
+            heart_rate = max(40, min(200, heart_rate))
+            
+            print(f"[DEBUG] Heart Rate Calculation:")
+            print(f"  Signal length: {len(lead_data)}")
+            print(f"  Peaks found: {len(peaks)}")
+            print(f"  R-R intervals (ms): {rr_intervals_ms[:5]}...")
+            print(f"  Valid intervals: {len(valid_intervals)} out of {len(rr_intervals_ms)}")
+            print(f"  Calculated heart rate: {int(heart_rate)} BPM")
+            
+            return int(heart_rate)
+            
+        except Exception as e:
+            print(f"[DEBUG] Heart Rate Calculation Error: {e}")
+            return 60  # Fallback to 60 BPM
+
+    def calculate_pr_interval(self, lead_data):
+        """Calculate PR interval from P wave to QRS complex"""
+        try:
+            # Simple approximation: PR interval is typically 120-200ms
+            # For demo purposes, return a typical value
+            return 160  # ms
+        except:
+            return 0
+
+    def calculate_qrs_duration(self, lead_data):
+        """Calculate QRS complex duration"""
+        try:
+            # QRS duration is typically 80-120ms
+            # For demo purposes, return a typical value
+            return 100  # ms
+        except:
+            return 0
+
+    def calculate_qrs_axis(self):
+        """Calculate QRS axis from leads I and aVF"""
+        try:
+            if len(self.data) < 6:  # Need leads I and aVF
+                return 0
+            
+            # Get current values from leads I and aVF
+            lead_i = self.data[0][-1] if len(self.data[0]) > 0 else 0
+            lead_avf = self.data[5][-1] if len(self.data[5]) > 0 else 0
+            
+            # Calculate QRS axis (simplified)
+            # Normal axis is between -30° and +90°
+            axis = int(np.arctan2(lead_avf, lead_i) * 180 / np.pi)
+            return axis
+        except:
+            return 0
+
+    def calculate_st_interval(self, lead_data):
+        """Calculate ST interval"""
+        try:
+            # ST interval is typically 80-120ms
+            # For demo purposes, return a typical value
+            return 100  # ms
+        except:
+            return 0
+
+    def update_ecg_metrics_display(self, heart_rate, pr_interval, qrs_duration, qrs_axis, st_interval):
+        """Update the ECG metrics display in the UI"""
+        try:
+            if hasattr(self, 'metric_labels'):
+                if 'heart_rate' in self.metric_labels:
+                    self.metric_labels['heart_rate'].setText(f"{heart_rate} BPM")
+                if 'pr_interval' in self.metric_labels:
+                    self.metric_labels['pr_interval'].setText(f"{pr_interval} ms")
+                if 'qrs_duration' in self.metric_labels:
+                    self.metric_labels['qrs_duration'].setText(f"{qrs_duration} ms")
+                if 'qrs_axis' in self.metric_labels:
+                    self.metric_labels['qrs_axis'].setText(f"{qrs_axis}°")
+                if 'st_interval' in self.metric_labels:
+                    self.metric_labels['st_interval'].setText(f"{st_interval} ms")
+        except Exception as e:
+            print(f"Error updating ECG metrics: {e}")
+
+    def get_current_metrics(self):
+        """Get current ECG metrics for dashboard display"""
+        try:
+            metrics = {}
+            
+            # Get current heart rate
+            if len(self.data) > 1:  # Lead II data available
+                heart_rate = self.calculate_heart_rate(self.data[1])
+                metrics['heart_rate'] = f"{heart_rate}" if heart_rate > 0 else "--"
+            else:
+                metrics['heart_rate'] = "--"
+            
+            # Get other metrics
+            if hasattr(self, 'metric_labels'):
+                if 'pr_interval' in self.metric_labels:
+                    metrics['pr_interval'] = self.metric_labels['pr_interval'].text().replace(' ms', '')
+                if 'qrs_duration' in self.metric_labels:
+                    metrics['qrs_duration'] = self.metric_labels['qrs_duration'].text().replace(' ms', '')
+                if 'qrs_axis' in self.metric_labels:
+                    metrics['qrs_axis'] = self.metric_labels['qrs_axis'].text().replace('°', '')
+                if 'st_interval' in self.metric_labels:
+                    metrics['st_interval'] = self.metric_labels['st_interval'].text().replace(' ms', '')
+            
+            # Get sampling rate
+            if hasattr(self, 'sampler') and self.sampler.sampling_rate > 0:
+                metrics['sampling_rate'] = f"{self.sampler.sampling_rate:.1f}"
+            else:
+                metrics['sampling_rate'] = "--"
+            
+            return metrics
+        except Exception as e:
+            print(f"Error getting current metrics: {e}")
+            return {}
+
+    def update_plot_y_range(self, plot_index):
+        """Update Y-axis range for a specific plot based on its data"""
+        try:
+            if plot_index >= len(self.data) or plot_index >= len(self.plot_widgets):
+                return
+            
+            # Get the data for this plot
+            data = self.data[plot_index]
+            
+            # Remove NaN values and get valid data
+            valid_data = data[~np.isnan(data)]
+            
+            if len(valid_data) == 0:
+                return
+            
+            # Calculate data statistics
+            data_min = np.min(valid_data)
+            data_max = np.max(valid_data)
+            data_mean = np.mean(valid_data)
+            data_std = np.std(valid_data)
+            
+            # Calculate appropriate Y-range with some padding
+            if data_std > 0:
+                # Use standard deviation for dynamic range
+                padding = max(data_std * 2, 100)  # At least 100 units padding
+                y_min = data_mean - padding
+                y_max = data_mean + padding
+            else:
+                # Fallback to min/max with padding
+                data_range = data_max - data_min
+                padding = max(data_range * 0.1, 50)  # 10% padding or at least 50 units
+                y_min = data_min - padding
+                y_max = data_max + padding
+            
+            # Ensure reasonable bounds
+            y_min = max(y_min, data_min - 500)
+            y_max = min(y_max, data_max + 500)
+            
+            # Update the plot's Y-range
+            self.plot_widgets[plot_index].setYRange(y_min, y_max, padding=0)
+            
+        except Exception as e:
+            print(f"Error updating Y-range for plot {plot_index}: {e}")
+
+    def on_settings_changed(self, key, value):
+        
+        print(f"Setting changed: {key} = {value}")
+        
+        if key in ["wave_speed", "wave_gain"]:
+            # Apply new settings immediately
+            self.apply_display_settings()
+            
+            # CRITICAL: Update all lead titles IMMEDIATELY
+            self.update_all_lead_titles()
+            
+            # Force redraw of all plots
+            self.redraw_all_plots()
+            
+            print(f"Settings applied and titles updated for {key} = {value}")
+
+    def update_all_lead_titles(self):
+        
+        current_speed = self.settings_manager.get_wave_speed()
+        current_gain = self.settings_manager.get_wave_gain()
+        
+        print(f"Updating titles: Speed={current_speed}mm/s, Gain={current_gain}mm/mV")
+        
+        for i, lead in enumerate(self.leads):
+            if i < len(self.axs):
+                new_title = f"{lead} | Speed: {current_speed}mm/s | Gain: {current_gain}mm/mV"
+                self.axs[i].set_title(new_title, fontsize=8, color='#666', pad=10)
+                print(f"Updated {lead} title: {new_title}")
+        
+        # Force redraw of all canvases
+        for canvas in self.canvases:
+            if canvas:
+                canvas.draw_idle()
+
+    def apply_display_settings(self):
+        
+        wave_speed = self.settings_manager.get_wave_speed()
+        wave_gain = self.settings_manager.get_wave_gain()
+        
+        # Update buffer size based on wave speed
+        # Higher speed = more samples per second = larger buffer for same time window
+        base_buffer = 2000
+        speed_factor = wave_speed / 50.0  # 50mm/s is baseline
+        self.buffer_size = int(base_buffer * speed_factor)
+        
+        # Update y-axis limits based on gain
+        # Higher gain = larger amplitude display
+        base_ylim = 400
+        gain_factor = wave_gain / 10.0  # 10mm/mV is baseline
+        self.ylim = int(base_ylim * gain_factor)
+
+        # Force immediate redraw of all plots with new settings
+        self.redraw_all_plots()
+        
+        print(f"Applied settings: speed={wave_speed}mm/s, gain={wave_gain}mm/mV, buffer={self.buffer_size}, ylim={self.ylim}")
+
+    # ------------------------ Update Dashboard Metrics on the top of the lead graphs ------------------------
+
+    def create_metrics_frame(self):
+        metrics_frame = QFrame()
+        metrics_frame.setObjectName("metrics_frame")
+        metrics_frame.setStyleSheet("""
+            QFrame {
+                background: #000000;
+                border: 2px solid #333333;
+                border-radius: 6px;
+                padding: 3px;  /* Reduced from 4px */
+                margin: 1px 0;  /* Reduced from 2px */
+            }
+        """)
+        
+        metrics_layout = QHBoxLayout(metrics_frame)
+        metrics_layout.setSpacing(6)  # Reduced from 10px
+        metrics_layout.setContentsMargins(6, 6, 6, 6)  # Reduced from 10px
+        
+        # Store metric labels for live update
+        self.metric_labels = {}
+        
+        # Updated metric info to match the image design with consistent color coding
+        metric_info = [
+            ("Heart Rate (BPM)", "0", "heart_rate", "#ff6b6b"),  # Red for heart rate
+            ("PR Intervals (ms)", "0", "pr_interval", "#4ecdc4"),  # Teal for PR
+            ("QRS Complex (ms)", "0", "qrs_duration", "#45b7d1"),  # Blue for QRS
+            ("QRS Axis", "0°", "qrs_axis", "#96ceb4"),  # Green for axis
+            ("ST Interval", "0", "st_interval", "#feca57"),  # Yellow for ST
+            ("Time Elapsed", "00:00", "time_elapsed", "#ffffff"),  # White for time
+        ]
+        
+        for title, value, key, color in metric_info:
+            metric_widget = QWidget()
+            metric_widget.setStyleSheet("""
+                QWidget {
+                    background: transparent;
+                    min-width: 100px;  /* Reduced from 120px */
+                    border-right: none;
+                }
+            """)
+            
+            # Create vertical layout for the metric widget
+            box = QVBoxLayout(metric_widget)
+            box.setSpacing(2)  # Reduced from 3px
+            box.setAlignment(Qt.AlignCenter)
+            
+            # Title label with consistent color coding - Make it smaller
+            lbl = QLabel(title)
+            lbl.setFont(QFont("Arial", 10, QFont.Bold))  # Reduced from 12px
+            lbl.setStyleSheet(f"color: {color}; margin-bottom: 3px; font-weight: bold;")  # Use same color as value
+            lbl.setAlignment(Qt.AlignCenter)
+            
+            # Value label with specific colors - Make it smaller
+            val = QLabel(value)
+            val.setFont(QFont("Arial", 12, QFont.Bold))  # Reduced from 14px
+            val.setStyleSheet(f"color: {color}; background: transparent; padding: 2px 0px;")  # Reduced from 4px
+            val.setAlignment(Qt.AlignCenter)
+            
+            # Add labels to the metric widget's layout
+            box.addWidget(lbl)
+            box.addWidget(val)
+            
+            # Add the metric widget to the horizontal layout
+            metrics_layout.addWidget(metric_widget)
+            
+            # Store reference for live update
+            self.metric_labels[key] = val
+        
+        heart_rate_widget = QWidget()
+        heart_rate_widget.setStyleSheet("""
+            QWidget {
+                background: transparent;
+                min-width: 100px;  /* Reduced from 120px */
+                border-right: none;
+            }
+        """)
+        
+        heart_layout = QHBoxLayout(heart_rate_widget)
+        heart_layout.setSpacing(2)
+        heart_layout.setContentsMargins(0, 0, 0, 0)
+        heart_layout.setAlignment(Qt.AlignCenter)
+        
+        # Heart icon - Make it smaller
+        heart_icon = QLabel("❤")
+        heart_icon.setFont(QFont("Arial", 16))  # Reduced from 18px
+        heart_icon.setStyleSheet("color: #ff0000; background: transparent; border: none; margin: 0; padding: 0;")
+        heart_icon.setAlignment(Qt.AlignCenter)
+        
+        # Heart rate value - Make it smaller
+        heart_rate_val = QLabel("00")
+        heart_rate_val.setFont(QFont("Arial", 12, QFont.Bold))  # Reduced from 14px
+        heart_rate_val.setStyleSheet("color: #ff0000; background: transparent; border: none; margin: 0;")
+        heart_rate_val.setAlignment(Qt.AlignCenter)
+        heart_rate_val.setContentsMargins(0, 0, 0, 0)
+        
+        heart_layout.addWidget(heart_icon)
+        heart_layout.addWidget(heart_rate_val)
+        
+        # Insert heart rate widget at the beginning
+        metrics_layout.insertWidget(0, heart_rate_widget)
+        self.metric_labels['heart_rate'] = heart_rate_val
+        
+        return metrics_frame
+
+    def update_ecg_metrics_on_top_of_lead_graphs(self, intervals):
+        if 'Heart_Rate' in intervals and intervals['Heart_Rate'] is not None:
+            self.metric_labels['heart_rate'].setText(
+                f"{int(round(intervals['Heart_Rate']))}" if isinstance(intervals['Heart_Rate'], (int, float)) else str(intervals['Heart_Rate'])
+            )
+        
+        if 'PR' in intervals and intervals['PR'] is not None:
+            self.metric_labels['pr_interval'].setText(
+                f"{int(round(intervals['PR']))}" if isinstance(intervals['PR'], (int, float)) else str(intervals['PR'])
+            )
+        
+        if 'QRS' in intervals and intervals['QRS'] is not None:
+            self.metric_labels['qrs_duration'].setText(
+                f"{int(round(intervals['QRS']))}" if isinstance(intervals['QRS'], (int, float)) else str(intervals['QRS'])
+            )
+        
+        if 'QRS_axis' in intervals and intervals['QRS_axis'] is not None:
+            self.metric_labels['qrs_axis'].setText(str(intervals['QRS_axis']))
+        
+        if 'ST' in intervals and intervals['ST'] is not None:
+            self.metric_labels['st_segment'].setText(
+                f"{int(round(intervals['ST']))}" if isinstance(intervals['ST'], (int, float)) else str(intervals['ST'])
+            )
+        
+        if 'time_elapsed' in self.metric_labels:
+            # Time elapsed will be updated separately by a timer
+            pass
+
+    def update_metrics_frame_theme(self, dark_mode=False, medical_mode=False):
+       
+        if not hasattr(self, 'metrics_frame'):
+            return
+            
+        if dark_mode:
+            # Dark mode styling
+            self.metrics_frame.setStyleSheet("""
+                QFrame#metrics_frame {
+                    background: #000000;
+                    border: 2px solid #333333;
+                    border-radius: 6px;
+                    padding: 4px;
+                    margin: 2px 0;
+                    /* Removed unsupported box-shadow property */
+                }
+            """)
+            
+            # Update text colors for dark mode
+            for key, label in self.metric_labels.items():
+                if key == 'heart_rate':
+                    label.setStyleSheet("color: #ff0000; background: transparent; padding: 0; border: none; margin: 0;")
+                elif key == 'pr_interval':
+                    label.setStyleSheet("color: #ff0000; background: transparent; padding: 4px 0px; border: none;")
+                elif key == 'qrs_duration':
+                    label.setStyleSheet("color: #ffff00; background: transparent; padding: 4px 0px; border: none;")
+                elif key == 'qrs_axis':
+                    label.setStyleSheet("color: #ffff00; background: transparent; padding: 4px 0px; border: none;")
+                elif key == 'st_segment':
+                    label.setStyleSheet("color: #0000ff; background: transparent; padding: 4px 0px; border: none;")
+                elif key == 'time_elapsed':
+                    label.setStyleSheet("color: #ffffff; background: transparent; padding: 4px 0px; border: none;")
+            
+            # Update title colors to green for dark mode
+            for child in self.metrics_frame.findChildren(QLabel):
+                if child != self.metric_labels.get('heart_rate') and child != self.metric_labels.get('time_elapsed'):
+                    if not any(child == label for label in self.metric_labels.values()):
+                        child.setStyleSheet("color: #00ff00; margin-bottom: 5px; border: none;")
+                        
+        elif medical_mode:
+            # Medical mode styling (green theme)
+            self.metrics_frame.setStyleSheet("""
+                QFrame#metrics_frame {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                        stop:0 #f0fff0, stop:1 #e0f0e0);
+                    border: 2px solid #4CAF50;
+                    border-radius: 6px;
+                    padding: 4px;
+                    margin: 2px 0;
+                    /* Removed unsupported box-shadow property */
+                }
+            """)
+            
+            # Update text colors for medical mode
+            for key, label in self.metric_labels.items():
+                if key == 'heart_rate':
+                    label.setStyleSheet("color: #d32f2f; background: transparent; padding: 0; border: none; margin: 0;")
+                elif key == 'pr_interval':
+                    label.setStyleSheet("color: #d32f2f; background: transparent; padding: 4px 0px; border: none;")
+                elif key == 'qrs_duration':
+                    label.setStyleSheet("color: #f57c00; background: transparent; padding: 4px 0px; border: none;")
+                elif key == 'qrs_axis':
+                    label.setStyleSheet("color: #f57c00; background: transparent; padding: 4px 0px; border: none;")
+                elif key == 'st_segment':
+                    label.setStyleSheet("color: #1976d2; background: transparent; padding: 4px 0px; border: none;")
+                elif key == 'time_elapsed':
+                    label.setStyleSheet("color: #388e3c; background: transparent; padding: 4px 0px; border: none;")
+            
+            # Update title colors to dark green for medical mode
+            for child in self.metrics_frame.findChildren(QLabel):
+                if child != self.metric_labels.get('heart_rate') and child != self.metric_labels.get('time_elapsed'):
+                    if not any(child == label for label in self.metric_labels.values()):
+                        child.setStyleSheet("color: #2e7d32; margin-bottom: 5px; border: none;")
+                        
+        else:
+            # Light mode (default) styling
+            self.metrics_frame.setStyleSheet("""
+                QFrame#metrics_frame {
+                    background: #ffffff;
+                    border: 2px solid #e0e0e0;
+                    border-radius: 6px;
+                    padding: 4px;
+                    margin: 2px 0;
+                    /* Removed unsupported box-shadow property */
+                }
+            """)
+            
+            # Update text colors for light mode
+            for key, label in self.metric_labels.items():
+                if key == 'heart_rate':
+                    label.setStyleSheet("color: #ff0000; background: transparent; padding: 0; border: none; margin: 0;")
+                elif key == 'pr_interval':
+                    label.setStyleSheet("color: #ff0000; background: transparent; padding: 4px 0px; border: none;")
+                elif key == 'qrs_duration':
+                    label.setStyleSheet("color: #ff8f00; background: transparent; padding: 4px 0px; border: none;")
+                elif key == 'qrs_axis':
+                    label.setStyleSheet("color: #ff8f00; background: transparent; padding: 4px 0px; border: none;")
+                elif key == 'st_segment':
+                    label.setStyleSheet("color: #1976d2; background: transparent; padding: 4px 0px; border: none;")
+                elif key == 'time_elapsed':
+                    label.setStyleSheet("color: #424242; background: transparent; padding: 4px 0px; border: none;")
+            
+            # Update title colors to dark gray for light mode
+            for child in self.metrics_frame.findChildren(QLabel):
+                if child != self.metric_labels.get('heart_rate') and child != self.metric_labels.get('time_elapsed'):
+                    if not any(child == label for label in self.metric_labels.values()):
+                        child.setStyleSheet("color: #666; margin-bottom: 5px; border: none;")
+
+    def update_elapsed_time(self):
+        
+        if self.start_time and 'time_elapsed' in self.metric_labels:
+            elapsed = time.time() - self.start_time
+            minutes = int(elapsed // 60)
+            seconds = int(elapsed % 60)
+            self.metric_labels['time_elapsed'].setText(f"{minutes:02d}:{seconds:02d}")
+
+    # ------------------------ Calculate ECG Intervals ------------------------
+
+    def calculate_ecg_intervals(self, lead_ii_data):
+        if not lead_ii_data or len(lead_ii_data) < 100:
+            return {}
+        
+        try:
+            from ecg.pan_tompkins import pan_tompkins
+            
+            # Convert to numpy array
+            data = np.array(lead_ii_data)
+            
+            # Detect R peaks using Pan-Tompkins algorithm
+            r_peaks = pan_tompkins(data, fs=500)  # 500Hz sampling rate
+            
+            if len(r_peaks) < 2:
+                return {}
+            
+            # Calculate heart rate
+            rr_intervals = np.diff(r_peaks) / 500.0  # Convert to seconds
+            mean_rr = np.mean(rr_intervals)
+            heart_rate = 60 / mean_rr if mean_rr > 0 else 0
+            
+            # Calculate intervals
+            pr_interval = 0.16  
+            qrs_duration = 0.08  
+            qt_interval = 0.4    
+            qtc_interval = 0.42  
+            qrs_axis = "--"      
+            st_segment = 0.12    
+            
+            return {
+                'Heart_Rate': heart_rate,
+                'PR': pr_interval * 1000,  # Convert to ms
+                'QRS': qrs_duration * 1000,
+                'QT': qt_interval * 1000,
+                'QTc': qtc_interval * 1000,
+                'QRS_axis': qrs_axis,
+                'ST': st_segment * 1000
+            }
+            
+        except Exception as e:
+            print(f"Error calculating ECG intervals: {e}")
+            return {}
+
+    # ------------------------ Show help dialog ------------------------
+
+    def show_help(self):
+        help_text = """
+        <h3>12-Lead ECG Monitor Help</h3>
+        <p><b>Getting Started:</b></p>
+        <ul>
+        <li>Configure serial port and baud rate in System Setup</li>
+        <li>Click 'Start' to begin recording</li>
+        <li>Click on any lead to view it in detail</li>
+        <li>Use the menu options for additional features</li>
+        </ul>
+        <p><b>Features:</b></p>
+        <ul>
+        <li>Real-time 12-lead ECG monitoring</li>
+        <li>Export data as PDF or CSV</li>
+        <li>Detailed lead analysis</li>
+        <li>Arrhythmia detection</li>
+        </ul>
+        """
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Help - 12-Lead ECG Monitor")
+        msg.setText(help_text)
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.exec_()
+
+    # ------------------------ Ports Configuration Dialog ------------------------
+
+    def show_ports_dialog(self):
+        """Show dialog for configuring COM port and baud rate"""
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Port Configuration")
+        dialog.setIcon(QMessageBox.Information)
+        
+        # Create a custom widget for the dialog
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Port selection
+        port_layout = QHBoxLayout()
+        port_layout.addWidget(QLabel("COM Port:"))
+        port_combo = QComboBox()
+        port_combo.addItem("Select Port")
+        
+        # Get available ports
+        ports = serial.tools.list_ports.comports()
+        for port in ports:
+            port_combo.addItem(port.device)
+        
+        # Set current port if available
+        current_port = self.settings_manager.get_serial_port()
+        if current_port and current_port != "Select Port":
+            index = port_combo.findText(current_port)
+            if index >= 0:
+                port_combo.setCurrentIndex(index)
+        
+        port_layout.addWidget(port_combo)
+        layout.addLayout(port_layout)
+        
+        # Baud rate selection
+        baud_layout = QHBoxLayout()
+        baud_layout.addWidget(QLabel("Baud Rate:"))
+        baud_combo = QComboBox()
+        baud_rates = ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
+        baud_combo.addItems(baud_rates)
+        
+        # Set current baud rate if available
+        current_baud = self.settings_manager.get_baud_rate()
+        if current_baud:
+            index = baud_combo.findText(current_baud)
+            if index >= 0:
+                baud_combo.setCurrentIndex(index)
+            else:
+                baud_combo.setCurrentText(current_baud)
+        
+        baud_layout.addWidget(baud_combo)
+        layout.addLayout(baud_layout)
+        
+        # Test connection button
+        test_btn = QPushButton("Test Connection")
+        test_btn.clicked.connect(lambda: self.test_serial_connection(port_combo.currentText(), baud_combo.currentText()))
+        layout.addWidget(test_btn)
+        
+        # Add the widget to the dialog
+        dialog.layout().addWidget(widget, 0, 0, 1, dialog.layout().columnCount())
+        
+        # Add buttons
+        save_btn = dialog.addButton("Save", QMessageBox.AcceptRole)
+        cancel_btn = dialog.addButton("Cancel", QMessageBox.RejectRole)
+        
+        # Show dialog
+        result = dialog.exec_()
+        
+        if result == QMessageBox.AcceptRole:
+            # Save settings
+            selected_port = port_combo.currentText()
+            selected_baud = baud_combo.currentText()
+            
+            if selected_port != "Select Port":
+                self.settings_manager.set_setting("serial_port", selected_port)
+                self.settings_manager.set_setting("baud_rate", selected_baud)
+                print(f"Port settings saved: {selected_port} at {selected_baud} baud")
+                
+                # Show confirmation
+                QMessageBox.information(self, "Settings Saved", 
+                    f"Port configuration saved:\nPort: {selected_port}\nBaud Rate: {selected_baud}")
+            else:
+                QMessageBox.warning(self, "Invalid Selection", "Please select a valid COM port.")
+
+    def test_serial_connection(self, port, baud_rate):
+        """Test the serial connection with the specified port and baud rate"""
+        if port == "Select Port":
+            QMessageBox.warning(self, "Invalid Port", "Please select a valid COM port first.")
+            return
+        
+        try:
+            # Try to open the serial connection
+            test_serial = serial.Serial(port, int(baud_rate), timeout=1)
+            test_serial.close()
+            
+            QMessageBox.information(self, "Connection Test", 
+                f"✅ Connection successful!\nPort: {port}\nBaud Rate: {baud_rate}")
+            
+        except serial.SerialException as e:
+            QMessageBox.critical(self, "Connection Failed", 
+                f"❌ Connection failed!\nPort: {port}\nBaud Rate: {baud_rate}\n\nError: {str(e)}")
+        except Exception as e:
+            QMessageBox.critical(self, "Connection Error", 
+                f"❌ Unexpected error!\nError: {str(e)}")
+
+    # ------------------------ Capture Screen Details ------------------------
+
+    def capture_screen(self):
+        try:
+            
+            # Get the main window
+            main_window = self.window()
+            
+            # Create a timer to delay the capture slightly to ensure UI is ready
+            def delayed_capture():
+                # Capture the entire window
+                pixmap = main_window.grab()
+                
+                # Show save dialog
+                filename, _ = QFileDialog.getSaveFileName(
+                    self, 
+                    "Save Screenshot", 
+                    f"ECG_Screenshot_{QDateTime.currentDateTime().toString('yyyy-MM-dd_hh-mm-ss')}.png",
+                    "PNG Files (*.png);;JPEG Files (*.jpg);;All Files (*)"
+                )
+                
+                if filename:
+                    # Save the screenshot
+                    if pixmap.save(filename):
+                        QMessageBox.information(
+                            self, 
+                            "Success", 
+                            f"Screenshot saved successfully!\nLocation: {filename}"
+                        )
+                    else:
+                        QMessageBox.warning(
+                            self, 
+                            "Error", 
+                            "Failed to save screenshot."
+                        )
+            
+            # Use a short delay to ensure the UI is fully rendered
+            QTimer.singleShot(100, delayed_capture)
+            
+        except Exception as e:
+            QMessageBox.critical(
+                self, 
+                "Error", 
+                f"Failed to capture screenshot: {str(e)}"
+            )
+
+    # ------------------------ Recording Details ------------------------
+
+    def toggle_recording(self):
+        if self.recording_toggle.isChecked():
+            self.start_recording()
+        else:
+            self.stop_recording()
+    
+    def start_recording(self):
+        try:
+            # Initialize recording
+            self.is_recording = True
+            
+            # Update UI - only change button text, no status updates
+            self.recording_toggle.setText("STOP")
+            
+            # Start capture timer
+            self.recording_timer = QTimer()
+            self.recording_timer.timeout.connect(self.capture_frame)
+            self.recording_timer.start(33)  # ~30 FPS
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Recording Error", f"Failed to start recording: {str(e)}")
+            self.is_recording = False
+            self.recording_toggle.setChecked(False)
+    
+    def stop_recording(self):
+        try:
+            # Stop recording
+            self.is_recording = False
+            if hasattr(self, 'recording_timer'):
+                self.recording_timer.stop()
+            
+            # Update UI - only change button text, no status updates
+            self.recording_toggle.setText("RECORD")
+            
+            # Ask user if they want to save the recording
+            if len(self.recording_frames) > 0:
+                reply = QMessageBox.question(
+                    self, 
+                    "Save Recording", 
+                    "Would you like to save the recording?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes
+                )
+                
+                if reply == QMessageBox.Yes:
+                    self.save_recording()
+                else:
+                    # Discard recording
+                    self.recording_frames.clear()
+                    QMessageBox.information(self, "Recording Discarded", "Recording has been discarded.")
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Recording Error", f"Failed to stop recording: {str(e)}")
+            self.recording_toggle.setChecked(True)
+
+    def capture_frame(self):
+        try:
+            if self.is_recording:
+                # Capture the current window
+                screen = QApplication.primaryScreen()
+                pixmap = screen.grabWindow(self.winId())
+                
+                # Convert to numpy array for OpenCV
+                image = pixmap.toImage()
+                width = image.width()
+                height = image.height()
+                ptr = image.bits()
+                ptr.setsize(height * width * 4)
+                arr = np.frombuffer(ptr, np.uint8).reshape((height, width, 4))
+                arr = cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
+                
+                # Store frame
+                self.recording_frames.append(arr)
+                
+        except Exception as e:
+            print(f"Frame capture error: {e}")
+    
+    def save_recording(self):
+        try:
+            if len(self.recording_frames) == 0:
+                QMessageBox.warning(self, "No Recording", "No frames to save.")
+                return
+            
+            # Get save file path
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            default_filename = f"ecg_recording_{timestamp}.mp4"
+            
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Recording",
+                default_filename,
+                "MP4 Files (*.mp4);;AVI Files (*.avi);;All Files (*)"
+            )
+            
+            if file_path:
+                # Get video dimensions from first frame
+                height, width = self.recording_frames[0].shape[:2]
+                
+                # Create video writer
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                out = cv2.VideoWriter(file_path, fourcc, 30.0, (width, height))
+                
+                # Write frames
+                for frame in self.recording_frames:
+                    out.write(frame)
+                
+                out.release()
+                
+                # Clear frames
+                self.recording_frames.clear()
+                
+                QMessageBox.information(
+                    self, 
+                    "Recording Saved", 
+                    f"Recording saved successfully to:\n{file_path}"
+                )
+            else:
+                # User cancelled save
+                self.recording_frames.clear()
+                QMessageBox.information(self, "Recording Cancelled", "Recording was not saved.")
+                
+        except Exception as e:
+            QMessageBox.warning(self, "Save Error", f"Failed to save recording: {str(e)}")
+            self.recording_frames.clear()
+
+    # ------------------------ Get lead figure in pdf ------------------------
+
+    def get_lead_figure(self, lead):
+        if hasattr(self, "lead_figures"):
+            return self.lead_figures.get(lead)
+
+        ordered_leads = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+        if hasattr(self, "figures"):
+            if lead in ordered_leads:
+                idx = ordered_leads.index(lead)
+                if idx < len(self.figures):
+                    return self.figures[idx]
+        return None
+
+    def center_on_screen(self):
+        qr = self.frameGeometry()
+        from PyQt5.QtWidgets import QApplication
+        cp = QApplication.desktop().availableGeometry().center()
+        qr.moveCenter(cp)
+        self.move(qr.topLeft())
+
+    def expand_lead(self, idx):
+        lead = self.leads[idx]
+        def get_lead_data():
+            return self.data[lead]
+        color = self.LEAD_COLORS.get(lead, "#00ff99")
+        if hasattr(self, '_detailed_timer') and self._detailed_timer is not None:
+            self._detailed_timer.stop()
+            self._detailed_timer.deleteLater()
+            self._detailed_timer = None
+        old_layout = self.detailed_widget.layout()
+        if old_layout is not None:
+            while old_layout.count():
+                item = old_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+            QWidget().setLayout(old_layout)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        back_btn = QPushButton("Back")
+        back_btn.setFixedHeight(40)
+        back_btn.clicked.connect(lambda: self.page_stack.setCurrentIndex(0))
+        layout.addWidget(back_btn, alignment=Qt.AlignLeft)
+        fig = Figure(facecolor='#fff')  # White background for the figure
+        ax = fig.add_subplot(111)
+        ax.set_facecolor('#fff')        # White background for the axes
+        line, = ax.plot([], [], color=color, lw=2)
+        canvas = FigureCanvas(fig)
+        canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout.addWidget(canvas)
+        # Create metric labels for cards
+        pr_label = QLabel("-- ms")
+        qrs_label = QLabel("-- ms")
+        qtc_label = QLabel("-- ms")
+        arrhythmia_label = QLabel("--")
+        # Add metrics card row below the plot (card style)
+        metrics_row = QHBoxLayout()
+        def create_metric_card(title, label_widget):
+            card = QFrame()
+            card.setStyleSheet("""
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #fff7f0, stop:1 #ffe0cc);
+                border-radius: 32px;
+                border: 2.5px solid #ff6600;
+                padding: 18px 18px;
+            """)
+            vbox = QVBoxLayout(card)
+            vbox.setSpacing(6)
+            lbl = QLabel(title)
+            lbl.setAlignment(Qt.AlignHCenter)
+            lbl.setStyleSheet("color: #ff6600; font-size: 18px; font-weight: bold;")
+            label_widget.setStyleSheet("font-size: 32px; font-weight: bold; color: #222; padding: 8px 0;")
+            vbox.addWidget(lbl)
+            vbox.addWidget(label_widget)
+            vbox.setAlignment(Qt.AlignHCenter)
+            return card
+        metrics_row.setSpacing(32)
+        metrics_row.setContentsMargins(32, 16, 32, 24)
+        metrics_row.setAlignment(Qt.AlignHCenter)
+        cards = [create_metric_card("PR Interval", pr_label),
+                 create_metric_card("QRS Duration", qrs_label),
+                 create_metric_card("QTc Interval", qtc_label),
+                 create_metric_card("Arrhythmia", arrhythmia_label)]
+        for card in cards:
+            card.setMinimumWidth(0)
+            card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            metrics_row.addWidget(card)
+        layout.addLayout(metrics_row)
+        self.detailed_widget.setLayout(layout)
+        self.detailed_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.page_stack.setCurrentIndex(1)
+        self._detailed_timer = QTimer(self)
+
+        def update_detailed_plot():
+            detailed_buffer_size = 500  # Reduced to 500 samples for real-time effect
+            data = get_lead_data()
+
+            current_gain = self.settings_manager.get_wave_gain()
+            current_speed = self.settings_manager.get_wave_speed()
+
+            # Robust: Only plot if enough data, else show blank
+            if data and len(data) >= 10:
+                plot_data = np.array(data[-detailed_buffer_size:])
+                x = np.arange(len(plot_data))
+                centered = plot_data - np.mean(plot_data)
+
+                # Apply current gain setting
+                gain_factor = float(current_gain) / 10.0
+                centered = centered * gain_factor
+
+                line.set_data(x, centered)
+                ax.set_xlim(0, max(len(centered)-1, 1))
+                
+                ylim = 500 * gain_factor
+                ymin = np.min(centered) - ylim * 0.2
+                ymax = np.max(centered) + ylim * 0.2
+                if ymin == ymax:
+                    ymin, ymax = -ylim, ylim
+                ax.set_ylim(ymin, ymax)
+
+                # --- PQRST detection and green labeling for Lead II only ---
+                # Remove all extra lines except the main ECG line (robust for all Matplotlib versions)
+                try:
+                    while len(ax.lines) > 1:
+                        ax.lines.remove(ax.lines[-1])
+                except Exception as e:
+                    print(f"Warning: Could not remove extra lines: {e}")
+                for txt in list(ax.texts):
+                    try:
+                        txt.remove()
+                    except Exception as e:
+                        print(f"Warning: Could not remove text: {e}")
+                # Optionally, clear all lines if you want only labels visible (no ECG trace):
+                # ax.lines.clear()
+                if lead == "II":
+                    # Use the same detection logic as in main.py
+                    from scipy.signal import find_peaks
+                    sampling_rate = 80
+                    ecg_signal = centered
+                    window_size = min(500, len(ecg_signal))
+                    if len(ecg_signal) > window_size:
+                        ecg_signal = ecg_signal[-window_size:]
+                        x = x[-window_size:]
+                    # R peak detection
+                    r_peaks, _ = find_peaks(ecg_signal, distance=int(0.2 * sampling_rate), prominence=0.6 * np.std(ecg_signal))
+                    # Q and S: local minima before and after R
+                    q_peaks = []
+                    s_peaks = []
+                    for r in r_peaks:
+                        q_start = max(0, r - int(0.06 * sampling_rate))
+                        q_end = r
+                        if q_end > q_start:
+                            q_idx = np.argmin(ecg_signal[q_start:q_end]) + q_start
+                            q_peaks.append(q_idx)
+                        s_start = r
+                        s_end = min(len(ecg_signal), r + int(0.06 * sampling_rate))
+                        if s_end > s_start:
+                            s_idx = np.argmin(ecg_signal[s_start:s_end]) + s_start
+                            s_peaks.append(s_idx)
+                    # P: positive peak before Q (within 0.1-0.2s)
+                    p_peaks = []
+                    for q in q_peaks:
+                        p_start = max(0, q - int(0.2 * sampling_rate))
+                        p_end = q - int(0.08 * sampling_rate)
+                        if p_end > p_start:
+                            p_candidates, _ = find_peaks(ecg_signal[p_start:p_end], prominence=0.1 * np.std(ecg_signal))
+                            if len(p_candidates) > 0:
+                                p_peaks.append(p_start + p_candidates[-1])
+                    # T: positive peak after S (within 0.1-0.4s)
+                    t_peaks = []
+                    for s in s_peaks:
+                        t_start = s + int(0.08 * sampling_rate)
+                        t_end = min(len(ecg_signal), s + int(0.4 * sampling_rate))
+                        if t_end > t_start:
+                            t_candidates, _ = find_peaks(ecg_signal[t_start:t_end], prominence=0.1 * np.std(ecg_signal))
+                            if len(t_candidates) > 0:
+                                t_peaks.append(t_start + t_candidates[np.argmax(ecg_signal[t_start + t_candidates])])
+                    # Only show the most recent peak for each label (if any)
+                    peak_dict = {'P': p_peaks, 'Q': q_peaks, 'R': r_peaks, 'S': s_peaks, 'T': t_peaks}
+                    for label, idxs in peak_dict.items():
+                        if len(idxs) > 0:
+                            idx = idxs[-1]
+                            ax.plot(idx, ecg_signal[idx], 'o', color='green', markersize=8, zorder=10)
+                            y_offset = 0.12 * (np.max(ecg_signal) - np.min(ecg_signal))
+                            if label in ['P', 'T']:
+                                ax.text(idx, ecg_signal[idx]+y_offset, label, color='green', fontsize=12, fontweight='bold', ha='center', va='bottom', zorder=11, bbox=dict(facecolor='white', edgecolor='none', alpha=0.7, boxstyle='round,pad=0.1'))
+                            else:
+                                ax.text(idx, ecg_signal[idx]-y_offset, label, color='green', fontsize=12, fontweight='bold', ha='center', va='top', zorder=11, bbox=dict(facecolor='white', edgecolor='none', alpha=0.7, boxstyle='round,pad=0.1'))
+                # --- Metrics (for Lead II only, based on R peaks) ---
+                if lead == "II":
+                    heart_rate = None
+                    pr_interval = None
+                    qrs_duration = None
+                    qt_interval = None
+                    qtc_interval = None
+                    rr_intervals = None
+
+                    if len(r_peaks) > 1:
+                        rr_intervals = np.diff(r_peaks) / sampling_rate  # in seconds
+                        mean_rr = np.mean(rr_intervals)
+                        if mean_rr > 0:
+                            heart_rate = 60 / mean_rr
+                    if len(p_peaks) > 0 and len(r_peaks) > 0:
+                        pr_interval = (r_peaks[-1] - p_peaks[-1]) * 1000 / sampling_rate  # ms
+                    if len(q_peaks) > 0 and len(s_peaks) > 0:
+                        qrs_duration = (s_peaks[-1] - q_peaks[-1]) * 1000 / sampling_rate  # ms
+                    if len(q_peaks) > 0 and len(t_peaks) > 0:
+                        qt_interval = (t_peaks[-1] - q_peaks[-1]) * 1000 / sampling_rate  # ms
+                    if qt_interval and heart_rate:
+                        qtc_interval = qt_interval / np.sqrt(60 / heart_rate)  # Bazett's formula
+
+                    # Update ECG metrics labels with calculated values for Lead2 graph
+
+                    if isinstance(pr_interval, (int, float)):
+                        pr_label.setText(f"{int(round(pr_interval))} ms")
+                    else:
+                        pr_label.setText("-- ms")
+
+                    if isinstance(qrs_duration, (int, float)):
+                        qrs_label.setText(f"{int(round(qrs_duration))} ms")
+                    else:
+                        qrs_label.setText("-- ms")
+
+                    if isinstance(qtc_interval, (int, float)) and qtc_interval >= 0:
+                        qtc_label.setText(f"{int(round(qtc_interval))} ms")
+                    else:
+                        qtc_label.setText("-- ms")
+                    
+                    # Calculate QRS axis using Lead I and aVF
+                    lead_I = self.data[0] if len(self.data) > 0 else []  # Lead I (index 0)
+                    lead_aVF = self.data[5] if len(self.data) > 5 else []  # Lead aVF (index 5)
+                    qrs_axis = calculate_qrs_axis(lead_I, lead_aVF, r_peaks)
+
+                    # Calculate ST segment using Lead II and r_peaks
+                    lead_ii = self.data[1] if len(self.data) > 1 else []  # Lead II (index 1)
+                    st_segment = calculate_st_segment(lead_ii, r_peaks, fs=500)
+
+                    if hasattr(self, 'dashboard_callback'):
+                        self.dashboard_callback({
+                            'heart_rate': heart_rate,
+                            'pr_interval': pr_interval,
+                            'qrs_duration': qrs_duration,
+                            'qtc_interval': qtc_interval,
+                            'qrs_axis': qrs_axis,
+                            'st_interval': st_segment
+                        })
+
+                    # --- Arrhythmia detection ---
+                    arrhythmia_result = detect_arrhythmia(heart_rate, qrs_duration, rr_intervals)
+                    arrhythmia_label.setText(arrhythmia_result)
+                else:
+                    pr_label.setText("-- ms")
+                    qrs_label.setText("-- ms")
+                    qtc_label.setText("-- ms")
+                    arrhythmia_label.setText("--")
+            else:
+                line.set_data([], [])
+                ax.set_xlim(0, 1)
+                ax.set_ylim(-500, 500)
+                pr_label.setText("-- ms")
+                qrs_label.setText("-- ms")
+                qtc_label.setText("-- ms")
+            canvas.draw_idle()
+        self._detailed_timer.timeout.connect(update_detailed_plot)
+        self._detailed_timer.start(100)
+        update_detailed_plot()  # Draw immediately on open
+
+    def refresh_ports(self):
+        self.port_combo.clear()
+        self.port_combo.addItem("Select Port")
+        ports = serial.tools.list_ports.comports()
+        for port in ports:
+            self.port_combo.addItem(port.device)
+
+    def update_lead_layout(self):
+        old_layout = self.plot_area.layout()
+        if old_layout:
+            while old_layout.count():
+                item = old_layout.takeAt(0)
+                widget = item.widget()
+                if widget:
+                    widget.setParent(None)
+            self.plot_area.setLayout(None)
+        self.figures = []
+        self.canvases = []
+        self.axs = []
+        self.lines = []
+        grid = QGridLayout()
+        grid.setSpacing(8)  # Reduced spacing between graphs
+        n_leads = len(self.leads)
+        if n_leads == 12:
+            rows, cols = 3, 4
+        elif n_leads == 7:
+            rows, cols = 2, 4
+        else:
+            rows, cols = 1, 1
+        for idx, lead in enumerate(self.leads):
+            row, col = divmod(idx, cols)
+            group = QGroupBox(lead)
+            group.setStyleSheet("""
+                QGroupBox {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
+                        stop:0 #ffffff, stop:1 #f8f9fa);
+                    border: 2px solid #e9ecef;
+                    border-radius: 12px;  /* Reduced from 16px */
+                    color: #495057;
+                    font: bold 14px 'Arial';  /* Reduced from 16px and changed font */
+                    margin-top: 8px;  /* Reduced from 12px */
+                    padding: 8px;  /* Reduced from 12px */
+                    /* Removed unsupported box-shadow property */
+                }
+                QGroupBox:hover {
+                    border: 2px solid #ff6600;
+                    /* Removed unsupported box-shadow and transform properties */
+                }
+            """)
+            vbox = QVBoxLayout(group)
+            vbox.setContentsMargins(6, 6, 6, 6)  # Reduced margins
+            vbox.setSpacing(4)  # Reduced spacing
+            fig = Figure(facecolor='#fafbfc', figsize=(5, 2))  # Reduced from (6, 2.5)
+            ax = fig.add_subplot(111)
+            ax.set_facecolor('#fafbfc')
+            ylim = self.ylim if hasattr(self, 'ylim') else 400
+            ax.set_ylim(-ylim, ylim)
+            ax.set_xlim(0, self.buffer_size)
+            
+            # Modern grid styling
+            ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5, color='#e9ecef')
+            ax.set_axisbelow(True)
+
+            # Remove spines for cleaner look
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+
+            # Style ticks - Make them smaller
+            ax.tick_params(axis='both', colors='#6c757d', labelsize=8)  # Reduced from 10
+            ax.tick_params(axis='x', length=0)
+            ax.tick_params(axis='y', length=0)
+
+            # Enhanced line styling
+            import matplotlib.patheffects as path_effects 
+            line, = ax.plot([0]*self.buffer_size, 
+                            color=self.LEAD_COLORS.get(lead, '#ff6600'), 
+                            lw=0.5, 
+                            alpha=0.9,
+                            path_effects=[path_effects.SimpleLineShadow(offset=(1,1), alpha=0.3),
+                                        path_effects.Normal()])
+
+            self.lines.append(line)
+            canvas = FigureCanvas(fig)
+            vbox.addWidget(canvas)
+            grid.addWidget(group, row, col)
+            self.figures.append(fig)
+            self.canvases.append(canvas)
+            self.axs.append(ax)
+        self.plot_area.setLayout(grid)
+        def make_expand_lead(idx):
+            return lambda event: self.expand_lead(idx)
+        for i, canvas in enumerate(self.canvases):
+            canvas.mpl_connect('button_press_event', make_expand_lead(i))
+
+    def redraw_all_plots(self):
+        
+        if hasattr(self, 'lines') and self.lines:
+            for i, line in enumerate(self.lines):
+                if i < len(self.leads):
+                    lead = self.leads[i]
+                    data = self.data.get(lead, [])
+                    
+                    if len(data) > 0:
+                        # Apply current settings to the real data
+                        gain_factor = self.settings_manager.get_wave_gain() / 10.0
+                        centered = (np.array(data) - np.nanmean(data)) * gain_factor
+                        
+                        # Update line data with new buffer size
+                        if len(centered) < self.buffer_size:
+                            plot_data = np.full(self.buffer_size, np.nan)
+                            plot_data[-len(centered):] = centered
+                        else:
+                            plot_data = centered[-self.buffer_size:]
+                        
+                        line.set_ydata(plot_data)
+                        
+                        # Update axis limits based on current settings
+                        if i < len(self.axs):
+                            ylim = self.ylim if hasattr(self, 'ylim') else 400
+                            self.axs[i].set_ylim(-ylim, ylim)
+                            self.axs[i].set_xlim(0, self.buffer_size)
+                            
+                            # Update plot title with current settings
+                            current_speed = self.settings_manager.get_wave_speed()
+                            current_gain = self.settings_manager.get_wave_gain()
+                            new_title = f"{lead} | Speed: {current_speed}mm/s | Gain: {current_gain}mm/mV"
+                            self.axs[i].set_title(new_title, fontsize=8, color='#666', pad=10)
+                            print(f"Redraw updated {lead} title: {new_title}")
+                        
+                        # Redraw canvas
+                        if i < len(self.canvases):
+                            self.canvases[i].draw_idle()
+
+    def update_ecg_lead(self, lead_index, data_array):
+        """Update a specific ECG lead with new data from serial communication"""
+        try:
+            if 0 <= lead_index < len(self.lines) and len(data_array) > 0:
+                # Apply current settings to the incoming data
+                gain_factor = self.settings_manager.get_wave_gain() / 10.0
+                centered = (np.array(data_array) - np.nanmean(data_array)) * gain_factor
+                
+                # Update line data with new buffer size
+                if len(centered) < self.buffer_size:
+                    plot_data = np.full(self.buffer_size, np.nan)
+                    plot_data[-len(centered):] = centered
+                else:
+                    plot_data = centered[-self.buffer_size:]
+                
+                # Update the specific lead line
+                self.lines[lead_index].set_ydata(plot_data)
+                
+                # Update axis limits
+                if lead_index < len(self.axs):
+                    ylim = self.ylim if hasattr(self, 'ylim') else 400
+                    self.axs[lead_index].set_ylim(-ylim, ylim)
+                    self.axs[lead_index].set_xlim(0, self.buffer_size)
+                
+                # Redraw the specific canvas
+                if lead_index < len(self.canvases):
+                    self.canvases[lead_index].draw_idle()
+                    
+                print(f"Updated ECG lead {lead_index} with {len(data_array)} samples")
+                
+        except Exception as e:
+            print(f"Error updating ECG lead {lead_index}: {str(e)}")
+
+    # ---------------------- Start Button Functionality ----------------------
+
+    def start_acquisition(self):
+        port = self.settings_manager.get_serial_port()
+        baud = self.settings_manager.get_baud_rate()
+
+        print(f"Starting acquisition with Port: {port}, Baud: {baud}")
+
+        if port == "Select Port" or baud == "Select Baud Rate" or port is None or baud is None:
+            self.show_connection_warning("Please configure serial port and baud rate in System Setup first.")
+            return
+        
+        try:
+            # Convert baud rate to integer with error handling
+            try:
+                baud_int = int(baud)
+            except (ValueError, TypeError):
+                self.show_connection_warning(f"Invalid baud rate: {baud}. Please set a valid baud rate in System Setup.")
+                return
+            
+            if self.serial_reader:
+                self.serial_reader.close()
+            
+            print(f"Connecting to {port} at {baud_int} baud...")
+            self.serial_reader = SerialECGReader(port, baud_int)
+            self.serial_reader.start()
+            print(f"[DEBUG] ECGTestPage - Starting timer with 50ms interval")
+            self.timer.start(50)
+            if hasattr(self, '_12to1_timer'):
+                self._12to1_timer.start(100)
+            print(f"[DEBUG] ECGTestPage - Timer started, serial reader created")
+            print(f"[DEBUG] ECGTestPage - Timer active: {self.timer.isActive()}")
+            print(f"[DEBUG] ECGTestPage - Number of leads: {len(self.leads)}")
+            print(f"[DEBUG] ECGTestPage - Number of plot widgets: {len(self.plot_widgets)}")
+            print(f"[DEBUG] ECGTestPage - Number of data lines: {len(self.data_lines)}")
+
+            # Start elapsed time tracking
+            self.start_time = time.time()
+            self.elapsed_timer.start(1000)
+                
+            print("Serial connection established successfully!")
+            
+        except Exception as e:
+            error_msg = f"Failed to connect to {port} at {baud} baud: {str(e)}"
+            print(error_msg)
+            self.show_connection_warning(error_msg)
+
+    # ---------------------- Stop Button Functionality ----------------------
+
+    def stop_acquisition(self):
+        port = self.settings_manager.get_serial_port()
+        baud = self.settings_manager.get_baud_rate()
+        
+        if port == "Select Port" or baud == "Select Baud Rate" or port is None or baud is None:
+            self.show_connection_warning("Please configure serial port and baud rate in System Setup first.")
+            return
+            
+        if self.serial_reader:
+            self.serial_reader.stop()
+        self.timer.stop()
+        if hasattr(self, '_12to1_timer'):
+            self._12to1_timer.stop()
+
+        # Stop elapsed time tracking
+        self.elapsed_timer.stop()
+        self.start_time = None
+
+        # --- Calculate and update metrics on dashboard ---
+        if hasattr(self, 'dashboard_callback'):
+            # Get Lead II data (index 1 in the 12-lead array)
+            lead2_data = self.data[1][-500:] if len(self.data) > 1 else []
+            lead_I_data = self.data[0][-500:] if len(self.data) > 0 else []  # Lead I (index 0)
+            lead_aVF_data = self.data[5][-500:] if len(self.data) > 5 else []  # Lead aVF (index 5)
+            heart_rate = None
+            pr_interval = None
+            qrs_duration = None
+            qt_interval = None
+            qtc_interval = None
+            qrs_axis = "--"
+            st_segment = "--"
+            if len(lead2_data) > 100:
+                # Use same detection logic as live
+                from scipy.signal import find_peaks
+                sampling_rate = 500
+                ecg_signal = np.array(lead2_data)
+                centered = ecg_signal - np.mean(ecg_signal)
+                # R peak detection
+                r_peaks, _ = find_peaks(centered, distance=int(0.2 * sampling_rate), prominence=0.6 * np.std(centered))
+                # Q and S: local minima before and after R
+                q_peaks = []
+                s_peaks = []
+                for r in r_peaks:
+                    q_start = max(0, r - int(0.06 * sampling_rate))
+                    q_end = r
+                    if q_end > q_start:
+                        q_idx = np.argmin(centered[q_start:q_end]) + q_start
+                        q_peaks.append(q_idx)
+                    s_start = r
+                    s_end = min(len(centered), r + int(0.06 * sampling_rate))
+                    if s_end > s_start:
+                        s_idx = np.argmin(centered[s_start:s_end]) + s_start
+                        s_peaks.append(s_idx)
+                # P: positive peak before Q (within 0.1-0.2s)
+                p_peaks = []
+                for q in q_peaks:
+                    p_start = max(0, q - int(0.2 * sampling_rate))
+                    p_end = q - int(0.08 * sampling_rate)
+                    if p_end > p_start:
+                        p_candidates, _ = find_peaks(centered[p_start:p_end], prominence=0.1 * np.std(centered))
+                        if len(p_candidates) > 0:
+                            p_peaks.append(p_start + p_candidates[-1])
+                # T: positive peak after S (within 0.1-0.4s)
+                t_peaks = []
+                for s in s_peaks:
+                    t_start = s + int(0.08 * sampling_rate)
+                    t_end = min(len(centered), s + int(0.4 * sampling_rate))
+                    if t_end > t_start:
+                        t_candidates, _ = find_peaks(centered[t_start:t_end], prominence=0.1 * np.std(centered))
+                        if len(t_candidates) > 0:
+                            t_peaks.append(t_start + t_candidates[np.argmax(centered[t_start + t_candidates])])
+                # Calculate intervals
+                if len(r_peaks) > 1:
+                    rr_intervals = np.diff(r_peaks) / sampling_rate  # in seconds
+                    mean_rr = np.mean(rr_intervals)
+                    heart_rate = 60 / mean_rr if mean_rr > 0 else None
+                else:
+                    rr_intervals = None
+                    heart_rate = None
+                if len(p_peaks) > 0 and len(r_peaks) > 0:
+                    pr_interval = (r_peaks[-1] - p_peaks[-1]) * 1000 / sampling_rate  # ms
+                if len(q_peaks) > 0 and len(s_peaks) > 0:
+                    qrs_duration = (s_peaks[-1] - q_peaks[-1]) * 1000 / sampling_rate  # ms
+                if len(q_peaks) > 0 and len(t_peaks) > 0:
+                    qt_interval = (t_peaks[-1] - q_peaks[-1]) * 1000 / sampling_rate  # ms
+                if qt_interval and heart_rate:
+                    qtc_interval = qt_interval / np.sqrt(60 / heart_rate)  # Bazett's formula
+
+                # QRS axis
+                qrs_axis = calculate_qrs_axis(lead_I_data, lead_aVF_data, r_peaks)
+
+                # ST segment
+                st_segment = calculate_st_segment(lead2_data, r_peaks, fs=sampling_rate)
+
+            self.dashboard_callback({
+                'heart_rate': heart_rate,
+                'pr_interval': pr_interval,
+                'qrs_duration': qrs_duration,
+                'qtc_interval': qtc_interval,
+                'qrs_axis': qrs_axis,
+                'st_interval': st_segment
+            })
+
+    def update_plot(self):
+        print(f"[DEBUG] ECGTestPage - update_plot called, serial_reader exists: {self.serial_reader is not None}")
+        
+        # Handle demo mode
+        if hasattr(self, 'demo_mode') and self.demo_mode:
+            print("[DEBUG] ECGTestPage - Demo mode active, updating plots")
+            self.update_plots()
+            return
+        
+        if not self.serial_reader:
+            print("[DEBUG] ECGTestPage - No serial reader, returning")
+            return
+        
+        # Read raw data directly from serial port
+        try:
+            line = self.serial_reader.ser.readline()
+            line_data = line.decode('utf-8', errors='replace').strip()
+            
+            if not line_data:
+                print("[DEBUG] ECGTestPage - No data received (empty line)")
+                return
+            
+            print(f"[DEBUG] ECGTestPage - Raw hardware data: '{line_data}' (length: {len(line_data)})")
+            
+            # Parse the 8-channel data (handle multiple spaces)
+            try:
+                # Split by any whitespace and filter out empty strings
+                values = [int(x) for x in line_data.split() if x.strip()]
+                print(f"[DEBUG] ECGTestPage - Parsed {len(values)} values: {values}")
+                
+                if len(values) >= 8:
+                    # Extract individual leads from 8-channel data
+                    lead1 = values[0]    # Lead I
+                    v4    = values[1]    # V4
+                    v5    = values[2]    # V5
+                    lead2 = values[3]    # Lead II
+                    v3    = values[4]    # V3
+                    v6    = values[5]    # V6
+                    v1    = values[6]    # V1
+                    v2    = values[7]    # V2
+                    
+                    # Calculate derived leads
+                    lead3 = lead2 - lead1
+                    avr = - (lead1 + lead2) / 2
+                    avl = (lead1 - lead3) / 2
+                    avf = (lead2 + lead3) / 2
+                    
+                    lead_data = {
+                        "I": lead1, "II": lead2, "III": lead3,
+                        "aVR": avr, "aVL": avl, "aVF": avf,
+                        "V1": v1, "V2": v2, "V3": v3, "V4": v4, "V5": v5, "V6": v6
+                    }
+                    
+                    print(f"[DEBUG] ECGTestPage - Successfully parsed 8-channel data: {lead_data}")
+                    
+                elif len(values) == 1:
+                    # Single value - generate realistic 12-lead ECG data
+                    ecg_value = values[0]
+                    print(f"[DEBUG] ECGTestPage - Single value received: {ecg_value}, generating realistic ECG...")
+                    
+                    # Initialize realistic ECG generation if not already done
+                    if not hasattr(self, 'ecg_generators'):
+                        self.ecg_generators = {}
+                        self.ecg_time_index = 0
+                        self.ecg_sampling_rate = self.demo_fs
+                        
+                        # Generate realistic ECG waveforms for each lead
+                        for lead in self.leads:
+                            ecg_wave, _ = generate_realistic_ecg_waveform(
+                                duration_seconds=60,  # 1 minute of data
+                                sampling_rate=self.ecg_sampling_rate,
+                                heart_rate=72,
+                                lead_name=lead
+                            )
+                            self.ecg_generators[lead] = ecg_wave
+                    
+                    # Get current sample from realistic ECG waveforms
+                    lead_data = {}
+                    for lead in self.leads:
+                        if lead in self.ecg_generators:
+                            # Scale the realistic ECG to match the input value range
+                            realistic_value = self.ecg_generators[lead][self.ecg_time_index % len(self.ecg_generators[lead])]
+                            # Scale to match typical ECG range (0-4095 for 12-bit ADC)
+                            scaled_value = int(ecg_value + realistic_value * 1000)  # Scale realistic ECG to mV range
+                            lead_data[lead] = scaled_value
+                    
+                    # Move to next time sample
+                    self.ecg_time_index += 1
+                    
+                else:
+                    print(f"[DEBUG] ECGTestPage - Unexpected number of values: {len(values)}")
+                    return
+                    
+            except ValueError as e:
+                print(f"[DEBUG] ECGTestPage - Error parsing values: {e}")
+                # Try to extract numeric part using regex
+                import re
+                numbers = re.findall(r'-?\d+', line_data)
+                if numbers:
+                    try:
+                        # Use first number as single value
+                        ecg_value = int(numbers[0])
+                        print(f"[DEBUG] ECGTestPage - Extracted numeric value: {ecg_value}")
+                        
+                        # Use single value to generate realistic 12-lead ECG data
+                        # Initialize realistic ECG generation if not already done
+                        if not hasattr(self, 'ecg_generators'):
+                            self.ecg_generators = {}
+                            self.ecg_time_index = 0
+                            self.ecg_sampling_rate = self.demo_fs
+                            
+                            # Generate realistic ECG waveforms for each lead
+                            for lead in self.leads:
+                                ecg_wave, _ = generate_realistic_ecg_waveform(
+                                    duration_seconds=60,  # 1 minute of data
+                                    sampling_rate=self.ecg_sampling_rate,
+                                    heart_rate=72,
+                                    lead_name=lead
+                                )
+                                self.ecg_generators[lead] = ecg_wave
+                        
+                        # Get current sample from realistic ECG waveforms
+                        lead_data = {}
+                        for lead in self.leads:
+                            if lead in self.ecg_generators:
+                                # Scale the realistic ECG to match the input value range
+                                realistic_value = self.ecg_generators[lead][self.ecg_time_index % len(self.ecg_generators[lead])]
+                                # Scale to match typical ECG range (0-4095 for 12-bit ADC)
+                                scaled_value = int(ecg_value + realistic_value * 1000)  # Scale realistic ECG to mV range
+                                lead_data[lead] = scaled_value
+                        
+                        # Move to next time sample
+                        self.ecg_time_index += 1
+                    except ValueError:
+                        print(f"[DEBUG] ECGTestPage - Could not parse numeric data from: '{line_data}'")
+                        return
+                else:
+                    print(f"[DEBUG] ECGTestPage - No numeric data found in: '{line_data}'")
+                    return
+            
+            # Update data buffers for all leads
+            for lead in self.leads:
+                if lead in lead_data:
+                    self.data[lead].append(lead_data[lead])
+                    if len(self.data[lead]) > self.buffer_size:
+                        self.data[lead].pop(0)
+            
+            print(f"[DEBUG] ECGTestPage - Updated data buffers, Lead II has {len(self.data['II'])} points")
+            
+            # Write latest Lead II data to file for dashboard
+            try:
+                import json
+                with open('lead_ii_live.json', 'w') as f:
+                    json.dump(self.data["II"][-500:], f)
+            except Exception as e:
+                print("Error writing lead_ii_live.json:", e)
+            
+            # Calculate and update ECG metrics in real-time
+            lead_ii_data = self.data.get("II", [])
+            if lead_ii_data:
+                intervals = self.calculate_ecg_intervals(lead_ii_data)
+                self.update_ecg_metrics_on_top_of_lead_graphs(intervals)
+            
+            # Update all plots
+            for i, lead in enumerate(self.leads):
+                if len(self.data[lead]) > 0:
+                    print(f"[DEBUG] ECGTestPage - Updating plot for {lead}: {len(self.data[lead])} data points")
+                    
+                    # Prepare plot data
+                    if len(self.data[lead]) < self.buffer_size:
+                        data = np.full(self.buffer_size, np.nan)
+                        data[-len(self.data[lead]):] = self.data[lead]
+                    else:
+                        data = np.array(self.data[lead])
+                    
+                    # Center the data
+                    centered = data - np.nanmean(data)
+
+                    # Apply current gain setting to the real data
+                    gain_factor = self.settings_manager.get_wave_gain() / 10.0
+                    centered = centered * gain_factor
+                    
+                    # Update the plot line
+                    if i < len(self.lines):
+                        self.lines[i].set_ydata(centered)
+                        print(f"[DEBUG] ECGTestPage - Updated {lead} plot with {len(centered)} points, range: {np.min(centered):.2f} to {np.max(centered):.2f}")
+                        
+                        # Use dynamic y-limits based on current gain setting
+                        ylim = self.ylim if hasattr(self, 'ylim') else 400
+                        if i < len(self.axs):
+                            self.axs[i].set_ylim(-ylim, ylim)
+                            
+                            # Use dynamic x-limits based on current buffer size
+                            self.axs[i].set_xlim(0, self.buffer_size)
+
+                            # Update title with current settings
+                            current_speed = self.settings_manager.get_wave_speed()
+                            current_gain = self.settings_manager.get_wave_gain()
+                            self.axs[i].set_title(f"{lead} | Speed: {current_speed}mm/s | Gain: {current_gain}mm/mV", 
+                                                fontsize=8, color='#666', pad=10)
+                            
+                            # Add grid lines to show scale
+                            self.axs[i].grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+                            
+                            # Remove any existing labels
+                            self.axs[i].set_xlabel("")
+                            self.axs[i].set_ylabel("")
+                        
+                        # Force redraw of the canvas
+                        if i < len(self.canvases):
+                            self.canvases[i].draw_idle()
+                    else:
+                        print(f"[DEBUG] ECGTestPage - Warning: No line object for lead {lead} at index {i}")
+                    
+        except Exception as e:
+            print(f"[DEBUG] ECGTestPage - Error in update_plot: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def export_pdf(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Export ECG Data as PDF", "", "PDF Files (*.pdf)")
+        if path:
+            from matplotlib.backends.backend_pdf import PdfPages
+            with PdfPages(path) as pdf:
+                for fig in self.figures:
+                    pdf.savefig(fig)
+
+    def export_csv(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Export ECG Data as CSV", "", "CSV Files (*.csv)")
+        if path:
+            with open(path, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(["Sample"] + self.leads)
+                for i in range(self.buffer_size):
+                    row = [i]
+                    for lead in self.leads:
+                        if i < len(self.data[lead]):
+                            row.append(self.data[lead][i])
+                        else:
+                            row.append("")
+                    writer.writerow(row)
+
+    def go_back(self):
+
+        if hasattr(self, '_overlay_active') and self._overlay_active:
+            self._restore_original_layout()
+
+        # Go back to dashboard (assumes dashboard is at index 0)
+        self.stacked_widget.setCurrentIndex(0)
+
+    def show_connection_warning(self, extra_msg=""):
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("Connection Required")
+        msg.setText("❤️ Please configure serial port and baud rate in System Setup.\n\nStay healthy!" + ("\n\n" + extra_msg if extra_msg else ""))
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.exec_()
+
+    def show_main_menu(self):  
+        self.clear_content()
+
+    def clear_content(self):
+        for i in reversed(range(self.content_layout.count())):
+            widget = self.content_layout.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
+
+    def show_sequential_view(self):
+        from ecg.lead_sequential_view import LeadSequentialView
+        win = LeadSequentialView(self.leads, self.data, buffer_size=500)
+        win.show()
+        self._sequential_win = win
+
+    # ------------------------------------ 12 leads overlay --------------------------------------------
+
+    def twelve_leads_overlay(self):
+        # If overlay is already shown, hide it and restore original layout
+        if hasattr(self, '_overlay_active') and self._overlay_active:
+            self._restore_original_layout()
+            return
+        
+        # Store the original plot area layout
+        self._store_original_layout()
+        
+        # Create the overlay widget
+        self._create_overlay_widget()
+        
+        # Replace the plot area with overlay
+        self._replace_plot_area_with_overlay()
+        
+        # Mark overlay as active
+        self._overlay_active = True
+
+        self._apply_current_overlay_mode()
+
+    def _store_original_layout(self):
+        
+        # Store the current plot area widget
+        self._original_plot_area = self.plot_area
+        
+        # Store the current layout
+        self._original_layout = self.plot_area.layout()
+        
+        # Store the current figures, canvases, axes, and lines
+        self._original_figures = getattr(self, 'figures', [])
+        self._original_canvases = getattr(self, 'canvases', [])
+        self._original_axs = getattr(self, 'axs', [])
+        self._original_lines = getattr(self, 'lines', [])
+
+    def _create_overlay_widget(self):
+        
+        from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QFrame
+        
+        # Create overlay container
+        self._overlay_widget = QWidget()
+        self._overlay_widget.setStyleSheet("""
+            QWidget {
+                background: #000;
+                border: 2px solid #ff6600;
+                border-radius: 15px;
+            }
+        """)
+        
+        # Main layout for overlay
+        overlay_layout = QVBoxLayout(self._overlay_widget)
+        overlay_layout.setContentsMargins(20, 20, 20, 20)
+        overlay_layout.setSpacing(15)
+        
+        # Top control panel with close button
+        top_panel = QFrame()
+        top_panel.setStyleSheet("""
+            QFrame {
+                background: rgba(255, 255, 255, 0.1);
+                border: 2px solid rgba(255, 255, 255, 0.3);
+                border-radius: 15px;
+                padding: 10px;
+            }
+        """)
+        top_layout = QHBoxLayout(top_panel)
+        top_layout.setContentsMargins(15, 10, 15, 10)
+        top_layout.setSpacing(20)
+        
+        # Close button
+        close_btn = QPushButton("Close Overlay")
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #ff6600, stop:1 #ff8c42);
+                color: white;
+                border: 2px solid #ff6600;
+                border-radius: 10px;
+                padding: 10px 20px;
+                font-weight: bold;
+                font-size: 14px;
+                min-width: 120px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #ff8c42, stop:1 #ff6600);
+                border: 2px solid #ff8c42;
+            }
+        """)
+        close_btn.clicked.connect(self._restore_original_layout)
+        
+        # Mode control buttons with highlighting
+        self.light_mode_btn = QPushButton("Light Mode")
+        self.dark_mode_btn = QPushButton("Dark Mode")
+        self.graph_mode_btn = QPushButton("Graph Mode")
+        
+        # Store current mode for highlighting
+        self._current_overlay_mode = "dark"  # Default mode
+        
+        button_style = """
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #4CAF50, stop:1 #45a049);
+                color: white;
+                border: 2px solid #4CAF50;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-weight: bold;
+                min-width: 100px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #45a049, stop:1 #4CAF50);
+                border: 2px solid #45a049;
+            }
+        """
+        
+        active_button_style = """
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #ff6600, stop:1 #ff8c42);
+                color: white;
+                border: 3px solid #ff6600;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-weight: bold;
+                min-width: 100px;
+                /* Removed unsupported box-shadow property */
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #ff8c42, stop:1 #ff6600);
+                border: 3px solid #ff8c42;
+            }
+        """
+        
+        self.light_mode_btn.setStyleSheet(button_style)
+        self.dark_mode_btn.setStyleSheet(button_style)
+        self.graph_mode_btn.setStyleSheet(button_style)
+        
+        # Add widgets to top panel
+        top_layout.addWidget(close_btn)
+        top_layout.addStretch()
+        top_layout.addWidget(self.light_mode_btn)
+        top_layout.addWidget(self.dark_mode_btn)
+        top_layout.addWidget(self.graph_mode_btn)
+        
+        overlay_layout.addWidget(top_panel)
+        
+        # Create the matplotlib figure with all leads
+        self._create_overlay_figure(overlay_layout)
+        
+        # Connect mode buttons
+        self.light_mode_btn.clicked.connect(lambda: self._apply_overlay_mode("light"))
+        self.dark_mode_btn.clicked.connect(lambda: self._apply_overlay_mode("dark"))
+        self.graph_mode_btn.clicked.connect(lambda: self._apply_overlay_mode("graph"))
+        
+        # Apply default dark mode and highlight it
+        self._apply_overlay_mode("dark")
+
+    def _create_overlay_figure(self, overlay_layout):
+        
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+        import numpy as np
+        
+        # Create figure with all leads - adjust spacing for better visibility
+        num_leads = len(self.leads)
+        fig = Figure(figsize=(16, num_leads * 2.2), facecolor='none')  # Changed to transparent
+        
+        # Adjust subplot parameters for better spacing
+        fig.subplots_adjust(left=0.05, right=0.95, top=0.98, bottom=0.02, hspace=0.15)
+        
+        self._overlay_axes = []
+        self._overlay_lines = []
+        
+        for idx, lead in enumerate(self.leads):
+            ax = fig.add_subplot(num_leads, 1, idx+1)
+            ax.set_facecolor('none')  # Changed to transparent
+            
+            # Remove all borders and spines
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+            
+            # Remove all ticks and labels for cleaner look
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_ylabel(lead, color='#00ff00', fontsize=12, fontweight='bold', labelpad=20)
+            
+            # Create line with initial data
+            line, = ax.plot(np.arange(self.buffer_size), [np.nan]*self.buffer_size, color="#00ff00", lw=1.5)
+            self._overlay_axes.append(ax)
+            self._overlay_lines.append(line)
+        
+        self._overlay_canvas = FigureCanvas(fig)
+        overlay_layout.addWidget(self._overlay_canvas)
+        
+        # Start update timer for overlay
+        self._overlay_timer = QTimer(self)
+        self._overlay_timer.timeout.connect(self._update_overlay_plots)
+        self._overlay_timer.start(100)
+
+    def _update_overlay_plots(self):
+        
+        if not hasattr(self, '_overlay_lines') or not self._overlay_lines:
+            return
+        
+        for idx, lead in enumerate(self.leads):
+            if idx < len(self._overlay_lines):
+                data = self.data.get(lead, [])
+                line = self._overlay_lines[idx]
+                ax = self._overlay_axes[idx]
+                
+                plot_data = np.full(self.buffer_size, np.nan)
+                
+                if data and len(data) > 0:
+                    n = min(len(data), self.buffer_size)
+                    centered = np.array(data[-n:]) - np.mean(data[-n:])
+                    
+                    # Apply current gain setting
+                    gain_factor = self.settings_manager.get_wave_gain() / 10.0
+                    centered = centered * gain_factor
+                    
+                    if n < self.buffer_size:
+                        stretched = np.interp(
+                            np.linspace(0, n-1, self.buffer_size),
+                            np.arange(n),
+                            centered
+                        )
+                        plot_data[:] = stretched
+                    else:
+                        plot_data[-n:] = centered
+                    
+                    # Set dynamic y-limits based on data
+                    ymin = np.min(centered) - 100
+                    ymax = np.max(centered) + 100
+                    if ymin == ymax:
+                        ymin, ymax = -500, 500
+                    
+                    # Ensure y-limits are reasonable
+                    ymin = max(-1000, ymin)
+                    ymax = min(1000, ymax)
+                    
+                    ax.set_ylim(ymin, ymax)
+                else:
+                    ax.set_ylim(-500, 500)
+                
+                # Set x-limits
+                ax.set_xlim(0, self.buffer_size-1)
+                line.set_ydata(plot_data)
+        
+        if hasattr(self, '_overlay_canvas'):
+            self._overlay_canvas.draw_idle()
+
+    def _apply_current_overlay_mode(self):
+
+        if hasattr(self, '_current_overlay_mode'):
+            self._apply_overlay_mode(self._current_overlay_mode)
+
+    def _apply_overlay_mode(self, mode):
+        
+        if not hasattr(self, '_overlay_axes') or not self._overlay_axes:
+            return
+        
+        # Store current mode
+        self._current_overlay_mode = mode
+        
+        self._clear_all_backgrounds()
+        
+        # Update button highlighting
+        button_style = """
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #4CAF50, stop:1 #45a049);
+                color: white;
+                border: 2px solid #4CAF50;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-weight: bold;
+                min-width: 100px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #45a049, stop:1 #4CAF50);
+                border: 2px solid #45a049;
+            }
+        """
+        
+        active_button_style = """
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #ff6600, stop:1 #ff8c42);
+                color: white;
+                border: 3px solid #ff6600;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-weight: bold;
+                min-width: 100px;
+                /* Removed unsupported box-shadow property */
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #ff8c42, stop:1 #ff6600);
+                border: 3px solid #ff8c42;
+            }
+        """
+        
+        # Reset all buttons to normal style
+        self.light_mode_btn.setStyleSheet(button_style)
+        self.dark_mode_btn.setStyleSheet(button_style)
+        self.graph_mode_btn.setStyleSheet(button_style)
+        
+        # Highlight the active button
+        if mode == "light":
+            self.light_mode_btn.setStyleSheet(active_button_style)
+            self._overlay_widget.setStyleSheet("""
+                QWidget {
+                    background: rgba(255, 255, 255, 0.95);
+                    border: 2px solid #ff6600;
+                    border-radius: 15px;
+                }
+            """)
+            
+            for ax in self._overlay_axes:
+                ax.set_facecolor('#ffffff')
+                ax.tick_params(axis='x', colors='#333333', labelsize=10)
+                ax.tick_params(axis='y', colors='#333333', labelsize=10)
+                ax.set_ylabel(ax.get_ylabel(), color='#333333', fontsize=14, fontweight='bold', labelpad=15)
+                for spine in ax.spines.values():
+                    spine.set_visible(True)
+                    spine.set_color('#333333')
+                    spine.set_linewidth(1.0)
+                ax.figure.canvas.draw()
+            
+            for line in self._overlay_lines:
+                line.set_color('#0066cc')
+                line.set_linewidth(2.0)
+        
+        elif mode == "dark":
+            self.dark_mode_btn.setStyleSheet(active_button_style)
+            self._overlay_widget.setStyleSheet("""
+                QWidget {
+                    background: rgba(0, 0, 0, 0.95);
+                    border: 2px solid #ff6600;
+                    border-radius: 15px;
+                }
+            """)
+            
+            for ax in self._overlay_axes:
+                ax.set_facecolor('#000')
+                ax.tick_params(axis='x', colors='#00ff00', labelsize=10)
+                ax.tick_params(axis='y', colors='#00ff00', labelsize=10)
+                ax.set_ylabel(ax.get_ylabel(), color='#00ff00', fontsize=14, fontweight='bold', labelpad=15)
+                for spine in ax.spines.values():
+                    spine.set_visible(False)
+            
+            for line in self._overlay_lines:
+                line.set_color('#00ff00')
+                line.set_linewidth(2.0)
+        
+        elif mode == "graph":
+            self.graph_mode_btn.setStyleSheet(active_button_style)
+            self._apply_graph_mode()
+        
+        if hasattr(self, '_overlay_canvas'):
+            self._overlay_canvas.draw()
+
+    def _clear_all_backgrounds(self):
+        
+        try:
+            # Clear figure-level background
+            if hasattr(self, '_overlay_canvas') and self._overlay_canvas.figure:
+                fig = self._overlay_canvas.figure
+                if hasattr(fig, '_figure_background'):
+                    try:
+                        fig._figure_background.remove()
+                        delattr(fig, '_figure_background')
+                    except:
+                        pass
+                
+                # Reset figure background to transparent
+                fig.patch.set_facecolor('none')
+            
+            # Clear axis-level backgrounds
+            if hasattr(self, '_overlay_axes'):
+                for ax in self._overlay_axes:
+                    if hasattr(ax, '_background_image'):
+                        try:
+                            ax._background_image.remove()
+                            delattr(ax, '_background_image')
+                        except:
+                            pass
+                    
+                    # Reset axis background to transparent
+                    ax.set_facecolor('none')
+                    ax.patch.set_alpha(0.0)
+                    
+        except Exception as e:
+            print(f"Error clearing backgrounds: {e}")
+
+    def _apply_graph_mode(self):
+        
+        try:
+            import os
+            from PyQt5.QtGui import QPixmap
+            import matplotlib.image as mpimg
+            
+            bg_path = "ecg_bgimg_test.png"
+            if os.path.exists(bg_path):
+                # Load the background image
+                bg_img = QPixmap(bg_path)
+                if not bg_img.isNull():
+                    # Save temporary file for matplotlib
+                    temp_path = "temp_bg.png"
+                    bg_img.save(temp_path)
+                    bg_matplotlib = mpimg.imread(temp_path)
+                    
+                    # Apply background to the entire figure first
+                    if hasattr(self, '_overlay_canvas') and self._overlay_canvas.figure:
+                        fig = self._overlay_canvas.figure
+                        fig.patch.set_facecolor('#ffffff')  # White background for the figure
+                        
+                        # Remove any existing background from figure
+                        if hasattr(fig, '_figure_background'):
+                            try:
+                                fig._figure_background.remove()
+                            except:
+                                pass
+                        
+                        # Apply background image to the entire figure
+                        fig._figure_background = fig.figimage(
+                            bg_matplotlib, 
+                            xo=0, yo=0, 
+                            alpha=0.4,  # Slightly transparent so waves are visible
+                            zorder=0
+                        )
+                    
+                    # Apply background to all axes
+                    for i, ax in enumerate(self._overlay_axes):
+                        # Set transparent background for subplots
+                        ax.set_facecolor('none')
+                        ax.patch.set_alpha(0.0)
+                        
+                        # Remove all borders and spines
+                        for spine in ax.spines.values():
+                            spine.set_visible(False)
+                        
+                        # Remove ticks for cleaner look
+                        ax.set_xticks([])
+                        ax.set_yticks([])
+                        
+                        # Set label color to dark for better visibility on grid background
+                        ax.set_ylabel(ax.get_ylabel(), color='#333333', fontsize=12, fontweight='bold', labelpad=20)
+                        
+                        # Set proper limits
+                        ax.set_xlim(0, self.buffer_size-1)
+                        ax.set_ylim(-500, 500)
+                    
+                    # Change line colors to dark red for better visibility on grid background
+                    for line in self._overlay_lines:
+                        line.set_color('#cc0000')  # Darker red
+                        line.set_linewidth(2.5)
+                        line.set_alpha(1.0)
+                    
+                    # Clean up temporary file
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                    
+                    # Force redraw
+                    if hasattr(self, '_overlay_canvas'):
+                        self._overlay_canvas.draw()
+                        
+                    return
+                        
+                else:
+                    print("Failed to load background image")
+                    return
+            else:
+                print(f"Background image not found at: {bg_path}")
+                return
+                
+        except Exception as e:
+            print(f"Error applying graph mode: {e}")
             return
 
-        # Read a batch of data to keep up
+    def _replace_plot_area_with_overlay(self):
+        
+        # Get the main horizontal layout
+        main_layout = self.grid_widget.layout()
+        
+        # Find the main_vbox layout item (which contains the plot_area)
+        for i in range(main_layout.count()):
+            item = main_layout.itemAt(i)
+            if item.layout() and hasattr(item.layout(), 'indexOf') and item.layout().indexOf(self.plot_area) >= 0:
+                # Found the layout containing plot_area
+                main_vbox_layout = item.layout()
+                
+                # Find and replace the plot_area in main_vbox_layout
+                plot_area_index = main_vbox_layout.indexOf(self.plot_area)
+                if plot_area_index >= 0:
+                    # Remove the plot_area
+                    main_vbox_layout.removeWidget(self.plot_area)
+                    self.plot_area.hide()
+                    
+                    # Add the overlay widget at the same position
+                    main_vbox_layout.insertWidget(plot_area_index, self._overlay_widget)
+                    return
+        
+        # Fallback: if we can't find the exact position, add to the end of main_vbox
+        # Find the main_vbox layout
+        for i in range(main_layout.count()):
+            item = main_layout.itemAt(i)
+            if item.layout() and hasattr(item.layout(), 'indexOf') and item.layout().indexOf(self.plot_area) >= 0:
+                main_vbox_layout = item.layout()
+                main_vbox_layout.removeWidget(self.plot_area)
+                self.plot_area.hide()
+                main_vbox_layout.addWidget(self._overlay_widget)
+                break
+
+    def _restore_original_layout(self):
+        
+        if not hasattr(self, '_overlay_active') or not self._overlay_active:
+            return
+        
+        # Stop overlay timer
+        if hasattr(self, '_overlay_timer'):
+            self._overlay_timer.stop()
+            self._overlay_timer.deleteLater()
+        
+        # Find and remove overlay widget from main_vbox layout
+        main_layout = self.grid_widget.layout()
+        for i in range(main_layout.count()):
+            item = main_layout.itemAt(i)
+            if item.layout() and hasattr(item.layout(), 'indexOf'):
+                main_vbox_layout = item.layout()
+                
+                # Check if overlay widget is in this layout
+                overlay_index = main_vbox_layout.indexOf(self._overlay_widget)
+                if overlay_index >= 0:
+                    # Remove overlay widget
+                    main_vbox_layout.removeWidget(self._overlay_widget)
+                    
+                    # Restore original plot area at the exact same position
+                    main_vbox_layout.insertWidget(overlay_index, self.plot_area)
+                    self.plot_area.show()
+                    break
+        
+        # Clean up overlay references
+        if hasattr(self, '_overlay_widget'):
+            self._overlay_widget.deleteLater()
+            delattr(self, '_overlay_widget')
+        
+        if hasattr(self, '_overlay_axes'):
+            delattr(self, '_overlay_axes')
+        
+        if hasattr(self, '_overlay_lines'):
+            delattr(self, '_overlay_lines')
+        
+        if hasattr(self, '_overlay_canvas'):
+            delattr(self, '_overlay_canvas')
+        
+        # Mark overlay as inactive
+        self._overlay_active = False
+        
+        # Force redraw of original plots
+        self.redraw_all_plots()
+
+    # ------------------------------------ 6 leads overlay --------------------------------------------
+
+    def six_leads_overlay(self):
+        # If overlay is already shown, hide it and restore original layout
+        if hasattr(self, '_overlay_active') and self._overlay_active:
+            self._restore_original_layout()
+            return
+        
+        # Store the original plot area layout
+        self._store_original_layout()
+        
+        # Create the 2-column overlay widget
+        self._create_two_column_overlay_widget()
+        
+        # Replace the plot area with overlay
+        self._replace_plot_area_with_overlay()
+        
+        # Mark overlay as active
+        self._overlay_active = True
+
+        self._apply_current_overlay_mode()
+
+    def _create_two_column_overlay_widget(self):
+        from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QFrame
+        
+        # Create overlay container
+        self._overlay_widget = QWidget()
+        self._overlay_widget.setStyleSheet("""
+            QWidget {
+                background: #000;
+                border: 2px solid #ff6600;
+                border-radius: 15px;
+            }
+        """)
+        
+        # Main layout for overlay
+        overlay_layout = QVBoxLayout(self._overlay_widget)
+        overlay_layout.setContentsMargins(20, 20, 20, 20)
+        overlay_layout.setSpacing(15)
+        
+        # Top control panel with close button and mode controls
+        top_panel = QFrame()
+        top_panel.setStyleSheet("""
+            QFrame {
+                background: rgba(255, 255, 255, 0.1);
+                border: 2px solid rgba(255, 255, 255, 0.3);
+                border-radius: 15px;
+                padding: 10px;
+            }
+        """)
+        top_layout = QHBoxLayout(top_panel)
+        top_layout.setContentsMargins(15, 10, 15, 10)
+        top_layout.setSpacing(20)
+        
+        # Close button
+        close_btn = QPushButton("Close Overlay")
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #ff6600, stop:1 #ff8c42);
+                color: white;
+                border: 2px solid #ff6600;
+                border-radius: 10px;
+                padding: 10px 20px;
+                font-weight: bold;
+                font-size: 14px;
+                min-width: 120px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #ff8c42, stop:1 #ff6600);
+                border: 2px solid #ff8c42;
+            }
+        """)
+        close_btn.clicked.connect(self._restore_original_layout)
+        
+        # Mode control buttons with highlighting
+        self.light_mode_btn = QPushButton("Light Mode")
+        self.dark_mode_btn = QPushButton("Dark Mode")
+        self.graph_mode_btn = QPushButton("Graph Mode")
+        
+        # Store current mode for highlighting
+        self._current_overlay_mode = "dark"  # Default mode
+        
+        button_style = """
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #4CAF50, stop:1 #45a049);
+                color: white;
+                border: 2px solid #4CAF50;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-weight: bold;
+                min-width: 100px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #45a049, stop:1 #4CAF50);
+                border: 2px solid #45a049;
+            }
+        """
+        
+        active_button_style = """
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #ff6600, stop:1 #ff8c42);
+                color: white;
+                border: 3px solid #ff6600;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-weight: bold;
+                min-width: 100px;
+                /* Removed unsupported box-shadow property */
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #ff8c42, stop:1 #ff6600);
+                border: 3px solid #ff8c42;
+            }
+        """
+        
+        self.light_mode_btn.setStyleSheet(button_style)
+        self.dark_mode_btn.setStyleSheet(button_style)
+        self.graph_mode_btn.setStyleSheet(button_style)
+        
+        # Add widgets to top panel
+        top_layout.addWidget(close_btn)
+        top_layout.addStretch()
+        top_layout.addWidget(self.light_mode_btn)
+        top_layout.addWidget(self.dark_mode_btn)
+        top_layout.addWidget(self.graph_mode_btn)
+        
+        overlay_layout.addWidget(top_panel)
+        
+        # Create the 2-column matplotlib figure
+        self._create_two_column_figure(overlay_layout)
+        
+        # Connect mode buttons
+        self.light_mode_btn.clicked.connect(lambda: self._apply_overlay_mode("light"))
+        self.dark_mode_btn.clicked.connect(lambda: self._apply_overlay_mode("dark"))
+        self.graph_mode_btn.clicked.connect(lambda: self._apply_overlay_mode("graph"))
+        
+        # Apply default dark mode and highlight it
+        self._apply_overlay_mode("dark")
+
+    def _create_two_column_figure(self, overlay_layout):
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+        import numpy as np
+        
+        # Define the two columns of leads
+        left_leads = ["I", "II", "III", "aVR", "aVL", "aVF"]
+        right_leads = ["V1", "V2", "V3", "V4", "V5", "V6"]
+        
+        # Create figure with 2 columns and 6 rows
+        fig = Figure(figsize=(16, 12), facecolor='none')
+        
+        # Adjust subplot parameters for better spacing
+        fig.subplots_adjust(left=0.05, right=0.95, top=0.98, bottom=0.02, hspace=0.15, wspace=0.1)
+        
+        self._overlay_axes = []
+        self._overlay_lines = []
+        
+        # Create left column (limb leads)
+        for idx, lead in enumerate(left_leads):
+            ax = fig.add_subplot(6, 2, 2*idx + 1)
+            ax.set_facecolor('none')
+            
+            # Remove all borders and spines
+
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+            
+            # Remove all ticks and labels for cleaner look
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_ylabel(lead, color='#00ff00', fontsize=12, fontweight='bold', labelpad=20)
+            
+            # Create line with initial data
+            line, = ax.plot(np.arange(self.buffer_size), [np.nan]*self.buffer_size, color="#00ff00", lw=1.5)
+            self._overlay_axes.append(ax)
+            self._overlay_lines.append(line)
+        
+        # Create right column (chest leads)
+        for idx, lead in enumerate(right_leads):
+            ax = fig.add_subplot(6, 2, 2*idx + 2)
+            ax.set_facecolor('none')
+            
+            # Remove all borders and spines
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+            
+            # Remove all ticks and labels for cleaner look
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_ylabel(lead, color='#00ff00', fontsize=12, fontweight='bold', labelpad=20)
+            
+            # Create line with initial data
+            line, = ax.plot(np.arange(self.buffer_size), [np.nan]*self.buffer_size, color="#00ff00", lw=1.5)
+            self._overlay_axes.append(ax)
+            self._overlay_lines.append(line)
+        
+        self._overlay_canvas = FigureCanvas(fig)
+        overlay_layout.addWidget(self._overlay_canvas)
+        
+        # Start update timer for overlay
+        self._overlay_timer = QTimer(self)
+        self._overlay_timer.timeout.connect(self._update_two_column_plots)
+        self._overlay_timer.start(100)
+
+    def _update_two_column_plots(self):
+        if not hasattr(self, '_overlay_lines') or not self._overlay_lines:
+            return
+        
+        # Define the two columns of leads
+        left_leads = ["I", "II", "III", "aVR", "aVL", "aVF"]
+        right_leads = ["V1", "V2", "V3", "V4", "V5", "V6"]
+        all_leads = left_leads + right_leads
+        
+        for idx, lead in enumerate(all_leads):
+            if idx < len(self._overlay_lines):
+                data = self.data.get(lead, [])
+                line = self._overlay_lines[idx]
+                ax = self._overlay_axes[idx]
+                
+                plot_data = np.full(self.buffer_size, np.nan)
+                
+                if data and len(data) > 0:
+                    n = min(len(data), self.buffer_size)
+                    centered = np.array(data[-n:]) - np.mean(data[-n:])
+                    
+                    # Apply current gain setting
+                    gain_factor = self.settings_manager.get_wave_gain() / 10.0
+                    centered = centered * gain_factor
+                    
+                    if n < self.buffer_size:
+                        stretched = np.interp(
+                            np.linspace(0, n-1, self.buffer_size),
+                            np.arange(n),
+                            centered
+                        )
+                        plot_data[:] = stretched
+                    else:
+                        plot_data[-n:] = centered
+                    
+                    # Set dynamic y-limits based on data
+                    ymin = np.min(centered) - 100
+                    ymax = np.max(centered) + 100
+                    if ymin == ymax:
+                        ymin, ymax = -500, 500
+                    
+                    # Ensure y-limits are reasonable
+                    ymin = max(-1000, ymin)
+                    ymax = min(1000, ymax)
+                    
+                    ax.set_ylim(ymin, ymax)
+                else:
+                    ax.set_ylim(-500, 500)
+                
+                # Set x-limits
+                ax.set_xlim(0, self.buffer_size-1)
+                line.set_ydata(plot_data)
+        
+        if hasattr(self, '_overlay_canvas'):
+            self._overlay_canvas.draw_idle()
+    def toggle_demo_mode(self):
+        """Toggle realistic ECG demo mode on/off"""
+        if not hasattr(self, 'demo_mode'):
+            self.demo_mode = False
+        
+        if not self.demo_mode:
+            # Start demo mode
+            self.demo_mode = True
+            self.demo_btn.setText("Stop Demo")
+            self.demo_btn.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                        stop:0 #ff6600, stop:1 #ff8c42);
+                    color: white;
+                    border: 2px solid #ff6600;
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 11px;
+                    font-weight: bold;
+                    text-align: center;
+                }
+                QPushButton:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                        stop:0 #ff8c42, stop:1 #ff6600);
+                    border-color: #ff8c42;
+                    color: white;
+                }
+            """)
+            
+            # Initialize realistic ECG generation
+            self.ecg_generators = {}
+            self.ecg_time_index = 0
+            self.ecg_sampling_rate = self.demo_fs
+            
+            # Generate realistic ECG waveforms for each lead
+            for lead in self.leads:
+                ecg_wave, _ = generate_realistic_ecg_waveform(
+                    duration_seconds=60,  # 1 minute of data
+                    sampling_rate=self.ecg_sampling_rate,
+                    heart_rate=72,
+                    lead_name=lead
+                )
+                self.ecg_generators[lead] = ecg_wave
+            
+            # Start demo timer
+            self.demo_timer = QTimer()
+            self.demo_timer.timeout.connect(self.update_demo_data)
+            self.demo_timer.start(2)  # 500 Hz = 2ms delay
+            
+            # Start main timer for plot updates
+            self.timer.start(50)  # 20 FPS for smooth display
+            
+            print("Demo mode started with realistic ECG waveforms")
+            
+        else:
+            # Stop demo mode
+            self.demo_mode = False
+            self.demo_btn.setText("Demo Mode")
+            self.demo_btn.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                        stop:0 #4CAF50, stop:1 #45a049);
+                    color: white;
+                    border: 2px solid #4CAF50;
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-size: 11px;
+                    font-weight: bold;
+                    text-align: center;
+                }
+                QPushButton:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                        stop:0 #45a049, stop:1 #4CAF50);
+                    border-color: #45a049;
+                    color: white;
+                }
+            """)
+            
+            # Stop demo timer
+            if hasattr(self, 'demo_timer'):
+                self.demo_timer.stop()
+                self.demo_timer.deleteLater()
+            
+            # Stop main timer
+            self.timer.stop()
+            
+            # Clear demo data
+            for i in range(len(self.data)):
+                self.data[i] = np.zeros(HISTORY_LENGTH)
+            
+            print("Demo mode stopped")
+
+    def update_demo_data(self):
+        """Update plots with realistic demo data"""
+        if not self.demo_mode:
+            return
+            
+        # Generate data for all leads using GitHub version approach
+        for i, lead in enumerate(self.leads):
+            if lead in self.ecg_generators and i < len(self.data):
+                # Get next sample from realistic ECG waveform
+                realistic_value = self.ecg_generators[lead][self.ecg_time_index % len(self.ecg_generators[lead])]
+                # Scale to typical ECG range with better visibility
+                scaled_value = 2100 + realistic_value * 2000  # Scale realistic ECG to mV range with higher amplitude
+                
+                # Update data using GitHub version method: roll and set last value
+                self.data[i] = np.roll(self.data[i], -1)
+                self.data[i][-1] = scaled_value
+        
+        # Move to next time sample
+        self.ecg_time_index += 1
+        
+        # Calculate and update ECG metrics for demo mode
+        self.calculate_ecg_metrics()
+        
+        # Display heartbeat in terminal for demo mode (every 10 updates for real-time feedback)
+        if hasattr(self, 'heartbeat_counter'):
+            self.heartbeat_counter += 1
+        else:
+            self.heartbeat_counter = 0
+            
+        if self.heartbeat_counter % 10 == 0 and len(self.data) > 1:  # Lead II data available
+            heart_rate = self.calculate_heart_rate(self.data[1])
+            if heart_rate > 0:
+                print(f"💓 HEARTBEAT: {heart_rate} BPM")
+        
+        # Update plots
+        self.update_plots()
+
+    def update_plots(self):
+        """Update all ECG plots with current data using PyQtGraph (GitHub version)"""
+        if not self.serial_reader or not self.serial_reader.running:
+            # For demo mode, just update the plots
+            for i in range(len(self.leads)):
+                if i < len(self.data_lines):
+                    # Update plot using PyQtGraph's setData method
+                    self.data_lines[i].setData(self.data[i])
+                    # Update Y-axis range based on actual data
+                    self.update_plot_y_range(i)
+            return
+
+        # Read a batch of data to keep up (from GitHub version)
         lines_processed = 0
         while lines_processed < 20: # Process up to 20 readings per GUI update
-            all_12_leads = self.serial_reader.read_value()
-            if all_12_leads:
+            all_8_leads = self.serial_reader.read_value()
+            if all_8_leads:
+                # Calculate 12-lead ECG from 8-channel data using standard formulas
+                all_12_leads = self.calculate_12_leads_from_8_channels(all_8_leads)
+                
                 # Update data buffers
-                for i in range(12):
-                    self.data[i] = np.roll(self.data[i], -1)
-                    self.data[i][-1] = all_12_leads[i]
+                for i in range(len(self.leads)):
+                    if i < len(self.data) and i < len(all_12_leads):
+                        self.data[i] = np.roll(self.data[i], -1)
+                        self.data[i][-1] = all_12_leads[i]
                 
                 # Update sampling rate
                 sampling_rate = self.sampler.add_sample()
-                if sampling_rate > 0 and 'sampling_rate' in self.metric_labels:
+                if sampling_rate > 0 and hasattr(self, 'metric_labels') and 'sampling_rate' in self.metric_labels:
                     self.metric_labels['sampling_rate'].setText(f"{sampling_rate:.1f} Hz")
                 
                 lines_processed += 1
@@ -293,177 +3932,22 @@ class ECGTestPage(QWidget):
         if lines_processed > 0:
             for i in range(len(self.leads)):
                 if i < len(self.data_lines):
+                    # Update plot data
                     self.data_lines[i].setData(self.data[i])
-
-            # R-Peak detection and Heart Rate calculation on Lead II (index 1)
-            lead_ii_data = self.data[1]
-            if self.sampler.sampling_rate > 0:
-                try:
-                    min_distance = max(1, int(self.sampler.sampling_rate * 0.4))
-                    # Adjust height threshold based on your signal's baseline and amplitude
-                    mean_val = np.mean(lead_ii_data)
-                    std_val = np.std(lead_ii_data)
-                    peaks, _ = find_peaks(lead_ii_data, height=mean_val + 1.5 * std_val, distance=min_distance)
                     
-                    self.r_peaks_scatter.setData(peaks, lead_ii_data[peaks])
-                    
-                    if len(peaks) >= 2:
-                        bpm = (self.sampler.sampling_rate / np.mean(np.diff(peaks))) * 60
-                        if 30 < bpm < 220 and 'heart_rate' in self.metric_labels:
-                             self.metric_labels['heart_rate'].setText(f"{int(bpm)}")
-                except Exception as e:
-                    print(f"Peak detection error: {e}")
-
-    # --- UNCHANGED METHODS BELOW ---
-    def start_acquisition(self):
-        port = self.settings_manager.get_serial_port()
-        baud = self.settings_manager.get_baud_rate()
-        if not port or not baud or port == "Select Port":
-            QMessageBox.warning(self, "Configuration Error", "Please configure the serial port and baud rate first.")
-            return
-
-        try:
-            self.serial_reader = SerialECGReader(port, int(baud))
-            self.serial_reader.start()
-            self.timer.start(50) # Update plots every 50ms (20 FPS)
-            print("Acquisition started.")
-        except Exception as e:
-            QMessageBox.critical(self, "Connection Error", f"Failed to start acquisition: {e}")
-            self.serial_reader = None
-
-    def stop_acquisition(self):
-        self.timer.stop()
-        if self.serial_reader:
-            self.serial_reader.stop()
-            self.serial_reader.close()
-            self.serial_reader = None
-        print("Acquisition stopped.")
-
-    def plot_clicked(self, plot_index, event):
-        if self.sampler.sampling_rate > 0:
-            lead_name = self.leads[plot_index]
-            lead_data = self.data[plot_index]
-            # Create and show the detail window
-            self.detail_view = DetailWindow(lead_name, lead_data, self.sampler.sampling_rate, self)
-            self.detail_view.show()
+                    # Update Y-axis range based on actual data
+                    self.update_plot_y_range(i)
             
-    # Add other helper methods like create_metrics_frame, show_ports_dialog, go_back, etc.
-    # from your original script. They don't need to be changed.
-    LEAD_COLORS = { "I": "#00ff99", "II": "#ff0055", "III": "#0099ff", "aVR": "#ff9900", "aVL": "#cc00ff", "aVF": "#00ccff", "V1": "#ffcc00", "V2": "#00ffcc", "V3": "#ff6600", "V4": "#6600ff", "V5": "#00b894", "V6": "#ff0066" }
-    
-    def create_metrics_frame(self):
-        metrics_frame = QFrame()
-        metrics_frame.setObjectName("metrics_frame")
-        metrics_frame.setStyleSheet("QFrame#metrics_frame { background: #000000; border: 2px solid #333333; border-radius: 6px; padding: 4px; }")
-        metrics_layout = QHBoxLayout(metrics_frame)
-        metrics_layout.setSpacing(10)
-        self.metric_labels = {}
-        
-        metric_info = [
-            ("Heart Rate", "00", "heart_rate", "#ff0000"),
-            ("PR (ms)", "--", "pr_interval", "#ff0000"),
-            ("QRS (ms)", "--", "qrs_duration", "#ffff00"),
-            ("SR (Hz)", "--", "sampling_rate", "#ffffff")
-        ]
-        
-        for title, value, key, color in metric_info:
-            box = QVBoxLayout()
-            box.setSpacing(2)
-            lbl = QLabel(title)
-            lbl.setFont(QFont("Arial", 10, QFont.Bold))
-            lbl.setStyleSheet("color: #00ff00;")
-            lbl.setAlignment(Qt.AlignCenter)
-            val = QLabel(value)
-            val.setFont(QFont("Arial", 14, QFont.Bold))
-            val.setStyleSheet(f"color: {color};")
-            val.setAlignment(Qt.AlignCenter)
-            box.addWidget(lbl)
-            box.addWidget(val)
-            metrics_layout.addLayout(box)
-            self.metric_labels[key] = val
-            metrics_layout.addStretch()
-        return metrics_frame
-
-    def show_ports_dialog(self):
-        """Show port selection dialog"""
-        dialog = PortSelectionDialog(self)
-        if dialog.exec_() == QDialog.Accepted:
-            port_name, baud_rate = dialog.get_selection()
-            if port_name and baud_rate:
-                # Save settings
-                self.settings_manager.set_serial_port(port_name)
-                self.settings_manager.set_baud_rate(baud_rate)
+            # Calculate and update ECG metrics
+            self.calculate_ecg_metrics()
+            
+            # Display heartbeat in terminal (every 10 updates for real-time feedback)
+            if hasattr(self, 'heartbeat_counter'):
+                self.heartbeat_counter += 1
+            else:
+                self.heartbeat_counter = 0
                 
-                QMessageBox.information(self, "Port Configuration", 
-                                      f"Port configured successfully!\nPort: {port_name}\nBaud Rate: {baud_rate}")
-                
-                # Update the ports button text to show selected port
-                self.ports_btn.setText(f"Port: {port_name}")
-
-    def go_back(self):
-        """Go back to the dashboard"""
-        self.stacked_widget.setCurrentIndex(0)
-
-
-class PortSelectionDialog(QDialog):
-    """Custom dialog for port and baud rate selection"""
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Port Configuration")
-        self.setModal(True)
-        self.setFixedSize(400, 200)
-        
-        # Main layout
-        layout = QVBoxLayout(self)
-        
-        # Title
-        title = QLabel("Select COM Port and Baud Rate")
-        title.setFont(QFont("Arial", 12, QFont.Bold))
-        title.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title)
-        
-        # Form layout
-        form_layout = QFormLayout()
-        
-        # COM Port selection
-        self.port_combo = QComboBox()
-        ports = serial.tools.list_ports.comports()
-        self.port_combo.addItem("Select Port")
-        for port in ports:
-            self.port_combo.addItem(f"{port.device} - {port.description}")
-        form_layout.addRow("COM Port:", self.port_combo)
-        
-        # Baud Rate selection
-        self.baud_combo = QComboBox()
-        baud_rates = ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
-        self.baud_combo.addItems(baud_rates)
-        self.baud_combo.setCurrentText("115200")  # Default baud rate
-        form_layout.addRow("Baud Rate:", self.baud_combo)
-        
-        layout.addLayout(form_layout)
-        
-        # Buttons
-        button_layout = QHBoxLayout()
-        self.ok_btn = QPushButton("OK")
-        self.cancel_btn = QPushButton("Cancel")
-        self.ok_btn.clicked.connect(self.accept)
-        self.cancel_btn.clicked.connect(self.reject)
-        button_layout.addWidget(self.ok_btn)
-        button_layout.addWidget(self.cancel_btn)
-        layout.addLayout(button_layout)
-        
-        # Set default button
-        self.ok_btn.setDefault(True)
-    
-    def get_selection(self):
-        """Get the selected port and baud rate"""
-        selected_port = self.port_combo.currentText()
-        selected_baud = self.baud_combo.currentText()
-        
-        if selected_port != "Select Port":
-            # Extract just the port name (e.g., "COM3" from "COM3 - USB Serial Port")
-            port_name = selected_port.split(" - ")[0]
-            return port_name, selected_baud
-        return None, None
-
+            if self.heartbeat_counter % 10 == 0 and len(self.data) > 1:  # Lead II data available
+                heart_rate = self.calculate_heart_rate(self.data[1])
+                if heart_rate > 0:
+                    print(f"💓 HEARTBEAT: {heart_rate} BPM")

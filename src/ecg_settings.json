@@ -5,6 +5,6 @@
   "sampling_mode": "Simultaneous",
   "demo_function": "Off",
   "storage": "SD",
-  "serial_port": "COM8",
+  "serial_port": "/dev/cu.usbserial-140",
   "baud_rate": "115200"
 }
