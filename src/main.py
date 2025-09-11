@@ -44,7 +44,8 @@ class LoginRegisterDialog(QDialog):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumSize(800, 600)  # Minimum size for usability
         
-        # Set window properties for better responsiveness
+        # Set window 
+        # properties for better responsiveness
         self.setWindowTitle("CardioX by Deckmount - Sign In / Sign Up")
         self.setWindowFlags(Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint)
         
