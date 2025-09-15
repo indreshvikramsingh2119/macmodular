@@ -5,11 +5,15 @@ A comprehensive ECG monitoring application with 12-lead ECG analysis, real-time 
 ## Features
 
 - **12-Lead ECG Analysis**: Real-time ECG signal processing and visualization
+- **Medical-Grade Signal Filtering**: Advanced filtering system for smooth, clean ECG waves like professional medical devices
+- **Expanded Lead View**: Detailed analysis page for individual ECG leads with PQRST labeling
 - **Live Metrics Calculation**: Heart Rate, PR Interval, QRS Duration, QTc Interval, QRS Axis, ST Segment
+- **Arrhythmia Detection**: Automatic detection of various cardiac arrhythmias
 - **Dashboard Interface**: Clean, modern dashboard with live metric updates
 - **User Authentication**: Sign-in/sign-out functionality
 - **PDF Report Generation**: Generate comprehensive ECG reports
 - **Background GIF Support**: Animated background on sign-in screen
+- **Real-time Data Processing**: Live ECG data acquisition and processing from hardware
 
 ## Project Structure
 
@@ -63,6 +67,9 @@ python main.py
 3. **Navigate to the dashboard** to view live ECG metrics
 4. **Click "ECG Lead Test 12"** to open the 12-lead ECG analysis page
 5. **View live metrics** including Heart Rate, PR Interval, QRS Duration, QTc Interval, QRS Axis, and ST Segment
+6. **Click on any ECG lead** to open the expanded lead view for detailed analysis
+7. **View PQRST labeling** and detailed metrics for individual leads
+8. **Monitor arrhythmia detection** in real-time
 
 ## ECG Metrics
 
@@ -80,13 +87,38 @@ The application calculates and displays the following metrics in real-time:
 - **Framework**: PyQt5 for GUI
 - **Plotting**: PyQtGraph for real-time ECG visualization
 - **Signal Processing**: NumPy and SciPy for ECG analysis
+- **Medical-Grade Filtering**: Advanced filtering pipeline including Wiener filter, Gaussian smoothing, adaptive median filtering
 - **Report Generation**: Matplotlib for static plots and PDF generation
+- **Real-time Processing**: Live data acquisition and processing from ECG hardware
+- **Arrhythmia Detection**: Pan-Tompkins algorithm for R-peak detection and cardiac rhythm analysis
 
 ## File Organization
 
 - **Essential Files**: Only the necessary files for the application to run are kept in the root directory
 - **Clutter Folder**: All test files, backups, and temporary files are moved to the `clutter/` folder for organization
 - **Clean Structure**: The codebase is organized with clear separation of concerns
+
+## Recent Updates
+
+### Medical-Grade ECG Filtering System
+- **Advanced Filtering Pipeline**: Implemented 8-stage filtering system for professional medical device-quality signals
+- **Wiener Filter**: Statistical noise reduction optimized for ECG signals
+- **Gaussian Smoothing**: Multi-stage smoothing for clean waveform appearance
+- **Adaptive Median Filtering**: Dynamic noise removal based on signal characteristics
+- **Real-time Smoothing**: Individual data point smoothing for live data processing
+
+### Expanded Lead View
+- **Detailed Analysis**: Click any ECG lead to open expanded analysis view
+- **PQRST Labeling**: Automatic detection and labeling of cardiac waveform components
+- **Enhanced Metrics**: Comprehensive metrics display with improved visibility
+- **Arrhythmia Detection**: Real-time detection of various cardiac arrhythmias
+- **Responsive UI**: Optimized layout and sizing for better user experience
+
+### Signal Quality Improvements
+- **Smooth Waveforms**: Medical-grade signal processing for clean, professional appearance
+- **Stable Baseline**: Reduced drift and improved signal stability
+- **Sharp R-peaks**: Enhanced peak detection for accurate heart rate calculation
+- **Noise Reduction**: Comprehensive noise filtering for clear signal visualization
 
 ## Support
 

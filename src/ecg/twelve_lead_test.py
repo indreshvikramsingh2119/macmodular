@@ -2477,12 +2477,15 @@ class ECGTestPage(QWidget):
                         device_data = np.array(data)
                         centered = (device_data - 2100) * gain_factor
                         
+                        # Apply medical-grade filtering for smooth waves
+                        filtered_data = self.apply_ecg_filtering(centered)
+                        
                         # Update line data with new buffer size
-                        if len(centered) < self.buffer_size:
+                        if len(filtered_data) < self.buffer_size:
                             plot_data = np.full(self.buffer_size, np.nan)
-                            plot_data[-len(centered):] = centered
+                            plot_data[-len(filtered_data):] = filtered_data
                         else:
-                            plot_data = centered[-self.buffer_size:]
+                            plot_data = filtered_data[-self.buffer_size:]
                         
                         line.set_ydata(plot_data)
                         
@@ -2514,12 +2517,15 @@ class ECGTestPage(QWidget):
                 # Scale to typical ECG range (subtract baseline ~2100 and scale)
                 centered = (device_data - 2100) * gain_factor
                 
+                # Apply noise reduction filtering
+                filtered_data = self.apply_ecg_filtering(centered)
+                
                 # Update line data with new buffer size
-                if len(centered) < self.buffer_size:
+                if len(filtered_data) < self.buffer_size:
                     plot_data = np.full(self.buffer_size, np.nan)
-                    plot_data[-len(centered):] = centered
+                    plot_data[-len(filtered_data):] = filtered_data
                 else:
-                    plot_data = centered[-self.buffer_size:]
+                    plot_data = filtered_data[-self.buffer_size:]
                 
                 # Update the specific lead line
                 self.lines[lead_index].set_ydata(plot_data)
@@ -2538,6 +2544,116 @@ class ECGTestPage(QWidget):
                 
         except Exception as e:
             print(f"Error updating ECG lead {lead_index}: {str(e)}")
+    
+    def apply_ecg_filtering(self, signal_data):
+        """Apply medical-grade ECG filtering for smooth, clean waves like professional devices"""
+        try:
+            from scipy.signal import butter, filtfilt, savgol_filter, medfilt, wiener
+            from scipy.ndimage import gaussian_filter1d
+            import numpy as np
+            
+            if len(signal_data) < 10:  # Need minimum data for filtering
+                return signal_data
+            
+            # Convert to numpy array
+            signal = np.array(signal_data, dtype=float)
+            
+            # 1. Remove DC offset (baseline drift) - more aggressive
+            signal = signal - np.mean(signal)
+            
+            # 2. Medical-grade bandpass filter (0.5-30 Hz) - tighter range for cleaner signal
+            fs = 500  # Sampling frequency
+            nyquist = fs / 2
+            
+            # Low-pass filter to remove high-frequency noise (>30 Hz) - more aggressive
+            low_cutoff = 30 / nyquist  # Reduced from 40 to 30 Hz
+            b_low, a_low = butter(6, low_cutoff, btype='low')  # Increased order to 6
+            signal = filtfilt(b_low, a_low, signal)
+            
+            # High-pass filter to remove DC and low-frequency drift (<0.5 Hz)
+            high_cutoff = 0.5 / nyquist
+            b_high, a_high = butter(6, high_cutoff, btype='high')  # Increased order to 6
+            signal = filtfilt(b_high, a_high, signal)
+            
+            # 3. Wiener filter for medical-grade noise reduction
+            if len(signal) > 5:
+                signal = wiener(signal, noise=0.05)  # Lower noise parameter for smoother result
+            
+            # 4. Gaussian smoothing for medical-grade smoothness
+            signal = gaussian_filter1d(signal, sigma=1.2)
+            
+            # 5. Savitzky-Golay filter with optimized parameters for ECG
+            if len(signal) >= 15:  # Increased minimum window size
+                window_length = min(15, len(signal) if len(signal) % 2 == 1 else len(signal) - 1)
+                signal = savgol_filter(signal, window_length, 4)  # Increased polynomial order to 4
+            
+            # 6. Adaptive median filter for spike removal
+            signal = medfilt(signal, kernel_size=7)  # Increased kernel size for better smoothing
+            
+            # 7. Multi-stage moving average for ultra-smooth baseline
+            # Stage 1: Short-term smoothing
+            window1 = min(7, len(signal))
+            if window1 > 1:
+                kernel1 = np.ones(window1) / window1
+                signal = np.convolve(signal, kernel1, mode='same')
+            
+            # Stage 2: Medium-term smoothing for baseline stability
+            window2 = min(5, len(signal))
+            if window2 > 1:
+                kernel2 = np.ones(window2) / window2
+                signal = np.convolve(signal, kernel2, mode='same')
+            
+            # 8. Final Gaussian smoothing for medical device quality
+            signal = gaussian_filter1d(signal, sigma=0.8)
+            
+            return signal
+            
+        except Exception as e:
+            print(f"Medical-grade filtering error: {e}")
+            # Return original signal if filtering fails
+            return signal_data
+    
+    def apply_realtime_smoothing(self, new_value, lead_index):
+        """Apply real-time smoothing for individual data points - medical grade"""
+        try:
+            # Initialize smoothing buffers if not exists
+            if not hasattr(self, 'smoothing_buffers'):
+                self.smoothing_buffers = {}
+            
+            if lead_index not in self.smoothing_buffers:
+                self.smoothing_buffers[lead_index] = []
+            
+            buffer = self.smoothing_buffers[lead_index]
+            buffer.append(new_value)
+            
+            # Keep only last 20 points for smoothing
+            if len(buffer) > 20:
+                buffer.pop(0)
+            
+            # Apply multi-stage smoothing
+            if len(buffer) >= 5:
+                # Stage 1: Simple moving average
+                smoothed = np.mean(buffer[-5:])
+                
+                # Stage 2: Weighted average (more weight to recent values)
+                if len(buffer) >= 10:
+                    weights = np.linspace(0.5, 1.0, len(buffer[-10:]))
+                    smoothed = np.average(buffer[-10:], weights=weights)
+                
+                # Stage 3: Gaussian-like smoothing
+                if len(buffer) >= 7:
+                    # Apply Gaussian weights
+                    gaussian_weights = np.exp(-0.5 * ((np.arange(len(buffer[-7:])) - len(buffer[-7:])//2) / 2)**2)
+                    gaussian_weights = gaussian_weights / np.sum(gaussian_weights)
+                    smoothed = np.sum(np.array(buffer[-7:]) * gaussian_weights)
+                
+                return smoothed
+            else:
+                return new_value
+                
+        except Exception as e:
+            print(f"Real-time smoothing error: {e}")
+            return new_value
 
     # ---------------------- Start Button Functionality ----------------------
 
@@ -2872,9 +2988,12 @@ class ECGTestPage(QWidget):
                     gain_factor = self.settings_manager.get_wave_gain() / 10.0
                     centered = (device_data - 2100) * gain_factor
                     
+                    # Apply noise reduction filtering
+                    filtered_data = self.apply_ecg_filtering(centered)
+                    
                     # Update the plot line
                     if i < len(self.lines):
-                        self.lines[i].set_ydata(centered)
+                        self.lines[i].set_ydata(filtered_data)
                         print(f"[DEBUG] ECGTestPage - Updated {lead} plot with {len(centered)} points, range: {np.min(centered):.2f} to {np.max(centered):.2f}")
                         
                         # Use dynamic y-limits based on current gain setting
@@ -3944,11 +4063,13 @@ class ECGTestPage(QWidget):
                 # Calculate 12-lead ECG from 8-channel data using standard formulas
                 all_12_leads = self.calculate_12_leads_from_8_channels(all_8_leads)
                 
-                # Update data buffers
+                # Update data buffers with filtering
                 for i in range(len(self.leads)):
                     if i < len(self.data) and i < len(all_12_leads):
                         self.data[i] = np.roll(self.data[i], -1)
-                        self.data[i][-1] = all_12_leads[i]
+                        # Apply medical-grade real-time smoothing
+                        smoothed_value = self.apply_realtime_smoothing(all_12_leads[i], i)
+                        self.data[i][-1] = smoothed_value
                 
                 # Update sampling rate
                 sampling_rate = self.sampler.add_sample()
