@@ -475,11 +475,11 @@ def plot_ecg_with_peaks(ax, ecg_signal, sampling_rate=500, arrhythmia_result=Non
     # --- End metrics ---
     # --- Display metrics and clinical info on the plot ---
     info_lines = [
-        f"PR Interval: {pr_interval if pr_interval else '--'}",
-        f"QRS Duration: {qrs_duration if qrs_duration else '--'}",
-        f"QTc Interval: {qtc_interval if qtc_interval else '--'}",
-        f"QRS Axis: {qrs_axis}",
-        f"ST Segment: {st_segment}",
+        f"PR : {pr_interval if pr_interval else '--'}",
+        f"QRS : {qrs_duration if qrs_duration else '--'}",
+        f"QTc : {qtc_interval if qtc_interval else '--'}",
+        f"QRS : {qrs_axis}",
+        f"ST : {st_segment}",
         f"Heart Rate: {heart_rate} bpm" if heart_rate else "Heart Rate: --"
     ]
     # Modern, clean info box
