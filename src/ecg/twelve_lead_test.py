@@ -188,7 +188,7 @@ class SerialECGReader:
         try:
             line_raw = self.ser.readline()
             line_data = line_raw.decode('utf-8', errors='replace').strip()
-
+            
             if line_data:
                 self.data_count += 1
                 # Print detailed data information
@@ -651,7 +651,7 @@ class ECGTestPage(QWidget):
         "V5": "#00b894",
         "V6": "#ff0066"
     }
-
+    
     def __init__(self, test_name, stacked_widget):
         super().__init__()
         
@@ -747,7 +747,7 @@ class ECGTestPage(QWidget):
         header_label.setAlignment(Qt.AlignCenter)
         header_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         menu_layout.addWidget(header_label)
-        
+
         # Create ECGMenu instance to use its methods
         self.ecg_menu = ECGMenu(parent=self, dashboard=self.stacked_widget.parent())
         # Connect ECGMenu to this ECG test page for data communication
@@ -1029,7 +1029,7 @@ class ECGTestPage(QWidget):
             self.r_peaks_scatter = self.plot_widgets[1].plot([], [], pen=None, symbol='o', symbolBrush='r', symbolSize=8)
         else:
             self.r_peaks_scatter = None
-        
+
         main_vbox.setSpacing(12)  # Reduced from 16px
         main_vbox.setContentsMargins(16, 16, 16, 16)  # Reduced from 24px
 
@@ -1504,7 +1504,7 @@ class ECGTestPage(QWidget):
         print(f"Applied settings: speed={wave_speed}mm/s, gain={wave_gain}mm/mV, buffer={self.buffer_size}, ylim={self.ylim}")
 
     # ------------------------ Update Dashboard Metrics on the top of the lead graphs ------------------------
-    
+
     def create_metrics_frame(self):
         metrics_frame = QFrame()
         metrics_frame.setObjectName("metrics_frame")
@@ -1792,7 +1792,7 @@ class ECGTestPage(QWidget):
                 'QRS_axis': qrs_axis,
                 'ST': st_segment * 1000
             }
-                
+            
         except Exception as e:
             print(f"Error calculating ECG intervals: {e}")
             return {}
