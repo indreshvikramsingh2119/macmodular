@@ -4,6 +4,11 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QFont, QPixmap, QMovie
 from PyQt5.QtCore import Qt, QTimer, QSize
+try:
+    from PyQt5.QtMultimedia import QSound
+except ImportError:
+    print("⚠️ QSound not available - heartbeat sound will be disabled")
+    QSound = None
 import sys
 import numpy as np
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -103,7 +108,7 @@ class SignInDialog(QDialog):
         layout.setSpacing(18)
         layout.setContentsMargins(28, 24, 28, 24)
         title = QLabel("Sign In to PulseMonitor")
-        title.setFont(QFont("Arial", 16, QFont.Bold))
+        title.setFont(QFont("Arial", 18, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
         form = QFormLayout()
@@ -220,7 +225,7 @@ class Dashboard(QWidget):
         # --- Header ---
         header = QHBoxLayout()
         logo = QLabel("ECG Monitor")
-        logo.setFont(QFont("Arial", 20, QFont.Bold))
+        logo.setFont(QFont("Arial", 24, QFont.Bold))
         logo.setStyleSheet("color: #ff6600;")
         logo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         header.addWidget(logo)
@@ -260,7 +265,7 @@ class Dashboard(QWidget):
         header.addStretch()
         
         self.user_label = QLabel(f"{username or 'User'}\n{role or ''}")
-        self.user_label.setFont(QFont("Arial", 10))
+        self.user_label.setFont(QFont("Arial", 12))
         self.user_label.setAlignment(Qt.AlignRight)
         self.user_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         header.addWidget(self.user_label)
@@ -285,7 +290,7 @@ class Dashboard(QWidget):
             greeting = "Good Evening"
         
         greet = QLabel(f"<span style='font-size:18pt;font-weight:bold;'>{greeting}, {username or 'User'}</span><br><span style='color:#888;'>Welcome to your ECG dashboard</span>")
-        greet.setFont(QFont("Arial", 14))
+        greet.setFont(QFont("Arial", 16))
         greet.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         greet_row.addWidget(greet)
         greet_row.addStretch()
@@ -323,7 +328,7 @@ class Dashboard(QWidget):
         heart_layout = QVBoxLayout(heart_card)
         
         heart_label = QLabel("Live Heart Rate Overview")
-        heart_label.setFont(QFont("Arial", 14, QFont.Bold))
+        heart_label.setFont(QFont("Arial", 16, QFont.Bold))
         heart_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         heart_layout.addWidget(heart_label)
         
@@ -363,9 +368,31 @@ class Dashboard(QWidget):
         # --- Heartbeat Animation ---
         self.heart_img = heart_img
         self.heartbeat_phase = 0
+        self.current_heart_rate = 60  # Default heart rate
+        self.last_beat_time = 0
+        self.beat_interval = 1000  # Default 1 second between beats (60 BPM)
         self.heartbeat_timer = QTimer(self)
         self.heartbeat_timer.timeout.connect(self.animate_heartbeat)
         self.heartbeat_timer.start(30)  # ~33 FPS
+        
+        # --- Heartbeat Sound ---
+        try:
+            if QSound is not None:
+                # Try to load heartbeat sound file
+                heartbeat_sound_path = get_asset_path("heartbeat.wav")
+                if os.path.exists(heartbeat_sound_path):
+                    self.heartbeat_sound = QSound(heartbeat_sound_path)
+                    print(f"✅ Heartbeat sound loaded: {heartbeat_sound_path}")
+                else:
+                    print(f"⚠️ Heartbeat sound not found at: {heartbeat_sound_path}")
+                    # Create a synthetic heartbeat sound
+                    self.create_heartbeat_sound()
+            else:
+                print("⚠️ QSound not available - heartbeat sound disabled")
+                self.heartbeat_sound = None
+        except Exception as e:
+            print(f"⚠️ Could not load heartbeat sound: {e}")
+            self.heartbeat_sound = None
         
         # --- ECG Recording (Animated Chart) ---
         ecg_card = QFrame()
@@ -374,7 +401,7 @@ class Dashboard(QWidget):
         ecg_layout = QVBoxLayout(ecg_card)
         
         ecg_label = QLabel("ECG Recording")
-        ecg_label.setFont(QFont("Arial", 12, QFont.Bold))
+        ecg_label.setFont(QFont("Arial", 14, QFont.Bold))
         ecg_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         ecg_layout.addWidget(ecg_label)
         
@@ -395,7 +422,7 @@ class Dashboard(QWidget):
         visitors_layout = QVBoxLayout(visitors_card)
         
         visitors_label = QLabel("Total Visitors")
-        visitors_label.setFont(QFont("Arial", 12, QFont.Bold))
+        visitors_label.setFont(QFont("Arial", 14, QFont.Bold))
         visitors_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         visitors_layout.addWidget(visitors_label)
         
@@ -419,7 +446,7 @@ class Dashboard(QWidget):
         schedule_layout = QVBoxLayout(schedule_card)
         
         schedule_label = QLabel("Schedule")
-        schedule_label.setFont(QFont("Arial", 12, QFont.Bold))
+        schedule_label.setFont(QFont("Arial", 14, QFont.Bold))
         schedule_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         schedule_layout.addWidget(schedule_label)
         cal = QCalendarWidget()
@@ -457,7 +484,7 @@ class Dashboard(QWidget):
         issue_layout = QVBoxLayout(issue_card)
         
         issue_label = QLabel("Issue Found")
-        issue_label.setFont(QFont("Arial", 12, QFont.Bold))
+        issue_label.setFont(QFont("Arial", 14, QFont.Bold))
         issue_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         issue_layout.addWidget(issue_label)
         
@@ -520,10 +547,10 @@ class Dashboard(QWidget):
         for title, value, unit, key in metric_info:
             box = QVBoxLayout()
             lbl = QLabel(title)
-            lbl.setFont(QFont("Arial", 10, QFont.Bold))
+            lbl.setFont(QFont("Arial", 12, QFont.Bold))
             lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             val = QLabel(f"{value} {unit}")
-            val.setFont(QFont("Arial", 16, QFont.Bold))
+            val.setFont(QFont("Arial", 18, QFont.Bold))
             val.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             box.addWidget(lbl)
             box.addWidget(val)
@@ -805,13 +832,116 @@ class Dashboard(QWidget):
                     pass
 
     def animate_heartbeat(self):
-        # Heartbeat effect: scale up and down in a sine wave pattern
-        beat = 1 + 0.13 * math.sin(self.heartbeat_phase) + 0.07 * math.sin(2 * self.heartbeat_phase)
+        """Animate heart image synchronized with live heart rate and play sound"""
+        import time
+        
+        current_time = time.time() * 1000  # Convert to milliseconds
+        
+        # Get current heart rate from metric card
+        try:
+            if 'heart_rate' in self.metric_labels:
+                hr_text = self.metric_labels['heart_rate'].text()
+                if hr_text and hr_text != "-- bpm" and "bpm" in hr_text:
+                    # Extract heart rate number from text like "86 bpm"
+                    hr_str = hr_text.replace(" bpm", "").strip()
+                    if hr_str.isdigit():
+                        self.current_heart_rate = int(hr_str)
+                        # Calculate beat interval based on heart rate
+                        if self.current_heart_rate > 0:
+                            self.beat_interval = 60000 / self.current_heart_rate  # Convert BPM to ms between beats
+        except Exception as e:
+            print(f"⚠️ Error parsing heart rate: {e}")
+        
+        # Check if it's time for a heartbeat
+        if current_time - self.last_beat_time >= self.beat_interval:
+            self.last_beat_time = current_time
+            
+            # Play heartbeat sound with increased volume
+            if self.heartbeat_sound:
+                try:
+                    # Try to set volume if available (some Qt versions support this)
+                    if hasattr(self.heartbeat_sound, 'setVolume'):
+                        self.heartbeat_sound.setVolume(100)  # Maximum volume
+                    self.heartbeat_sound.play()
+                except Exception as e:
+                    print(f"⚠️ Error playing heartbeat sound: {e}")
+            
+            # Reset heartbeat phase for new beat
+            self.heartbeat_phase = 0
+        
+        # Heartbeat effect: scale up and down based on phase
+        # More pronounced beat when close to actual heartbeat
+        time_since_beat = current_time - self.last_beat_time
+        beat_progress = min(time_since_beat / self.beat_interval, 1.0)
+        
+        # Create a more realistic heartbeat pattern
+        if beat_progress < 0.1:  # First 10% of cycle - sharp beat
+            beat = 1 + 0.25 * math.sin(beat_progress * 10 * math.pi)
+        elif beat_progress < 0.2:  # Next 10% - second beat
+            beat = 1 + 0.15 * math.sin((beat_progress - 0.1) * 10 * math.pi)
+        else:  # Rest of cycle - gradual return to normal
+            beat = 1 + 0.05 * math.sin(self.heartbeat_phase)
+        
+        # Apply the beat effect
         size = int(self.heart_base_size * beat)
         self.heart_img.setPixmap(self.heart_pixmap.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        self.heartbeat_phase += 0.18  # Controls speed of beat
+        
+        # Update phase for smooth animation
+        self.heartbeat_phase += 0.18
         if self.heartbeat_phase > 2 * math.pi:
             self.heartbeat_phase -= 2 * math.pi
+    
+    def create_heartbeat_sound(self):
+        """Create a synthetic heartbeat sound if no sound file is available"""
+        try:
+            import wave
+            import struct
+            import math
+            
+            # Create a simple heartbeat sound (lub-dub pattern)
+            sample_rate = 22050
+            duration = 0.6  # seconds
+            samples = int(sample_rate * duration)
+            
+            # Generate heartbeat sound data
+            sound_data = []
+            for i in range(samples):
+                t = i / sample_rate
+                
+                # First beat (lub) - lower frequency (INCREASED VOLUME)
+                if t < 0.1:
+                    freq1 = 80  # Hz
+                    amplitude = 0.8 * math.sin(2 * math.pi * freq1 * t) * math.exp(-t * 10)
+                # Second beat (dub) - higher frequency (INCREASED VOLUME)
+                elif 0.2 < t < 0.3:
+                    freq2 = 120  # Hz
+                    amplitude = 0.7 * math.sin(2 * math.pi * freq2 * (t - 0.2)) * math.exp(-(t - 0.2) * 10)
+                else:
+                    amplitude = 0
+                
+                # Convert to 16-bit PCM
+                sample = int(amplitude * 32767)
+                sound_data.append(sample)
+            
+            # Save as WAV file
+            heartbeat_path = get_asset_path("heartbeat.wav")
+            with wave.open(heartbeat_path, 'w') as wav_file:
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(sample_rate)
+                wav_file.writeframes(struct.pack('<' + 'h' * len(sound_data), *sound_data))
+            
+            # Load the created sound
+            if QSound is not None:
+                self.heartbeat_sound = QSound(heartbeat_path)
+                print(f"✅ Created synthetic heartbeat sound: {heartbeat_path}")
+            else:
+                self.heartbeat_sound = None
+                print(f"⚠️ QSound not available - heartbeat sound disabled")
+            
+        except Exception as e:
+            print(f"⚠️ Could not create heartbeat sound: {e}")
+            self.heartbeat_sound = None
     def handle_sign(self):
         if self.sign_btn.text() == "Sign In":
             dialog = SignInDialog(self)
