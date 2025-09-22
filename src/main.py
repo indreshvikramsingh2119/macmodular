@@ -217,6 +217,7 @@ class LoginRegisterDialog(QDialog):
         glass.setObjectName("Glass")
         glass.setStyleSheet("""
             QWidget#Glass {
+            
                 background: rgba(255,255,255,0.18);
                 border-radius: 24px;
                 border: 2px solid rgba(255,255,255,0.35);zx
