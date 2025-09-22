@@ -1,0 +1,10 @@
+{
+  "wave_speed": "50",
+  "wave_gain": "10",
+  "lead_sequence": "Standard",
+  "sampling_mode": "Simultaneous",
+  "demo_function": "Off",
+  "storage": "SD",
+  "serial_port": "/dev/cu.usbserial-140",
+  "baud_rate": "115200"
+}
