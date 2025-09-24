@@ -16,6 +16,30 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QIcon
 
 
+def _load_env_if_present():
+    """Lightweight .env loader: loads KEY=VALUE pairs into os.environ if .env exists."""
+    try:
+        # Look for .env in project root (two levels up from this file: src/utils/.. -> project root)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
+        env_path = os.path.join(project_root, ".env")
+        if os.path.exists(env_path):
+            with open(env_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        key = key.strip()
+                        value = value.strip().strip('"').strip("'")
+                        if key and value and key not in os.environ:
+                            os.environ[key] = value
+    except Exception:
+        # Silent fallback; environment variables may already be provided by OS
+        pass
+
+
 class CrashLogger:
     """Comprehensive crash logging and email reporting system"""
     
@@ -32,14 +56,15 @@ class CrashLogger:
         # Setup logging
         self.setup_logging()
         
-        # Email configuration (hidden in environment or config)
+        # Load .env if present, then read email configuration from environment
+        _load_env_if_present()
         self.email_config = {
-            'smtp_server': 'smtp.gmail.com',
-            'smtp_port': 587,
-            'sender_email': 'ecg.crash.reports@gmail.com',  # Hidden email
-            'sender_password': 'your_app_password_here',  # App-specific password
-            'recipient_email': 'divyanshsrivastav72@gmail.com',
-            'subject_prefix': f'[{app_name}] Crash Report'
+            'smtp_server': os.getenv('EMAIL_SMTP_SERVER', 'smtp.gmail.com'),
+            'smtp_port': int(os.getenv('EMAIL_SMTP_PORT', '587')),
+            'sender_email': os.getenv('EMAIL_SENDER', ''),
+            'sender_password': os.getenv('EMAIL_PASSWORD', ''),
+            'recipient_email': os.getenv('EMAIL_RECIPIENT', ''),
+            'subject_prefix': os.getenv('EMAIL_SUBJECT_PREFIX', f'[{app_name}] Crash Report')
         }
         
         # System info
@@ -267,14 +292,23 @@ ECG Monitor Crash Logger
             """
             
             msg.attach(MIMEText(body, 'plain'))
-            
-            # Send email
-            server = smtplib.SMTP(self.email_config['smtp_server'], self.email_config['smtp_port'])
-            server.starttls()
-            server.login(self.email_config['sender_email'], self.email_config['sender_password'])
+
+            # Send email with TLS first, then fallback to SSL
             text = msg.as_string()
-            server.sendmail(self.email_config['sender_email'], self.email_config['recipient_email'], text)
-            server.quit()
+            try:
+                server = smtplib.SMTP(self.email_config['smtp_server'], self.email_config['smtp_port'])
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+                server.login(self.email_config['sender_email'], self.email_config['sender_password'])
+                server.sendmail(self.email_config['sender_email'], self.email_config['recipient_email'], text)
+                server.quit()
+            except smtplib.SMTPAuthenticationError as e:
+                # Authentication failed via TLS, try SSL (port 465)
+                server = smtplib.SMTP_SSL(self.email_config['smtp_server'], 465)
+                server.login(self.email_config['sender_email'], self.email_config['sender_password'])
+                server.sendmail(self.email_config['sender_email'], self.email_config['recipient_email'], text)
+                server.quit()
             
             self.log_info("Crash report email sent successfully", "EMAIL_SENT")
             
@@ -352,6 +386,8 @@ Log Entries:
             self.progress.emit(30)
             
             # Add each log entry
+            if not self.logs_to_send:
+                body += "\nNo crash logs available. Sending session diagnostics only.\n\n"
             for i, log_entry in enumerate(self.logs_to_send):
                 body += f"""
 Entry {i+1}:
@@ -578,15 +614,22 @@ class CrashLogDialog(QDialog):
         """Send email report with all logs"""
         logs = self.crash_logger.get_all_logs()
         
+        # Allow sending diagnostics even if there are no logs
         if not logs:
-            QMessageBox.information(self, "No Logs", "No crash logs to send.")
-            return
+            reply = QMessageBox.question(
+                self,
+                "Send Diagnostics",
+                "No crash logs found. Send a diagnostics report with session and system details?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
         
         # Confirm sending
         reply = QMessageBox.question(
             self, 
             "Send Email Report", 
-            f"Send {len(logs)} log entries to the development team?\n\nThis will include system information and crash details.",
+            f"Send {len(logs)} log entries (or diagnostics) to the development team?\n\nThis will include system information and crash details.",
             QMessageBox.Yes | QMessageBox.No
         )
         
