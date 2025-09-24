@@ -504,7 +504,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     story.append(Spacer(1, 12))
 
 
-        # Patient Details
+    # Patient Details
     if patient is None:
         patient = {}
     first_name = patient.get("first_name", "")
@@ -967,14 +967,33 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
 
     # Doctor Name (BOTTOM LEFT - existing code)
     
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    label_text = "Doctor Name: "
+    doctor_name_label = String(-30, -100, label_text,
+                            fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+    master_drawing.add(doctor_name_label)
+
+    # Value from Save ECG -> passed in 'patient'
+    doctor = ""
+    try:
+        if patient:
+            doctor = str(patient.get("doctor", "")).strip()
+    except Exception:
+        doctor = ""
+
+    if doctor:
+        value_x = -30 + stringWidth(label_text, "Helvetica-Bold", 10) + 6
+        doctor_name_value = String(value_x, -100, doctor,
+                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
+        master_drawing.add(doctor_name_value)
 
     # Doctor Name (BOTTOM LEFT - SHIFTED FURTHER DOWN) - KEEP AS IS
-    doctor_name_label = String(-30, -100, "Doctor Name: __", 
+    doctor_name_label = String(-30, -100, "Doctor Name: ", 
                               fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
     master_drawing.add(doctor_name_label)
 
     # Doctor Signature (BOTTOM LEFT - SHIFTED FURTHER DOWN) - KEEP AS IS
-    doctor_sign_label = String(-30, -120, "Doctor Sign: __", 
+    doctor_sign_label = String(-30, -120, "Doctor Sign: ", 
                               fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
     master_drawing.add(doctor_sign_label)
 

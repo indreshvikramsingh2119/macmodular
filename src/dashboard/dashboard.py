@@ -1394,8 +1394,39 @@ class Dashboard(QWidget):
         
         if filename:
             try:
-                # Generate the PDF using the simple function from ecg_report_generator
-                generate_ecg_report(filename, ecg_data, lead_img_paths, self, self.ecg_test_page)
+
+                patient = getattr(self, "patient_details", None)
+                if not patient:
+                    try:
+                        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+                        data_file = os.path.join(base_dir, "ecg_data.txt")
+                        if os.path.exists(data_file):
+                            with open(data_file, "r") as f:
+                                lines = [l for l in f.readlines() if l.strip()]
+                            if lines:
+                                last = lines[-1]
+                                parts = [x.strip() for x in last.split(",")]
+                                if len(parts) >= 5:
+                                    organisation, doctor, name, age, gender = parts[:5]
+                                    first, *rest = name.split()
+                                    patient = {
+                                        "first_name": first,
+                                        "last_name": " ".join(rest),
+                                        "age": age,
+                                        "gender": gender,
+                                        "doctor": doctor
+                                    }
+                    except Exception:
+                        patient = None
+
+                # Always stamp current date/time from system
+                now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                if not patient:
+                    patient = {}
+                patient["date_time"] = now_str
+
+                # Generate the PDF with patient details
+                generate_ecg_report(filename, ecg_data, lead_img_paths, self, self.ecg_test_page, patient)
                 
                 QMessageBox.information(
                     self, 

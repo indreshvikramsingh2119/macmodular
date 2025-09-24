@@ -7,6 +7,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
 from PyQt5.QtCore import QTimer, Qt, QPropertyAnimation, QEasingCurve, QTimer, pyqtProperty
+from PyQt5.QtGui import QIntValidator
 from utils.settings_manager import SettingsManager
 import os
 import matplotlib.pyplot as plt
@@ -701,6 +702,9 @@ class ECGMenu(QGroupBox):
             entry.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             form_layout.addWidget(entry, i, 1)
             entries[label] = entry
+        
+        entries["Doctor"].setMaxLength(20)
+        entries["Patient Name"].setMaxLength(20)
 
         # Age field with responsive sizing
         lbl_age = QLabel("Age")
@@ -720,6 +724,7 @@ class ECGMenu(QGroupBox):
         form_layout.addWidget(lbl_age, 3, 0)
 
         age_entry = QLineEdit()
+        age_entry.setValidator(QIntValidator(0, 120, age_entry))
         age_entry.setStyleSheet(f"""
             QLineEdit {{
                 font: {entry_font_size}pt Arial;
@@ -866,10 +871,30 @@ class ECGMenu(QGroupBox):
             QMessageBox.warning(self.parent(), "Missing Data", "Please fill all the fields and select gender.")
             return
 
+        # Store patient details on the menu and dashboard for PDF generation
+        try:
+            from datetime import datetime
+            name = values["Patient Name"]
+            first, *rest = name.split()
+            patient_details = {
+                "first_name": first,
+                "last_name": " ".join(rest),
+                "age": values["Age"],
+                "gender": values["Gender"],
+                "doctor": values["Doctor"],
+                "date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            setattr(self, "patient_details", patient_details)
+            if self.dashboard:
+                setattr(self.dashboard, "patient_details", patient_details)
+        except Exception as e:
+            print(f"⚠️ Could not cache patient details: {e}")
+
         try:
             with open("ecg_data.txt", "a") as file:
                 file.write(f"{values['Organisation']}, {values['Doctor']}, {values['Patient Name']}, {values['Age']}, {values['Gender']}\n")
             QMessageBox.information(self.parent(), "Saved", "ECG details saved successfully!")
+            self.hide_sliding_panel()
         except Exception as e:
             QMessageBox.critical(self.parent(), "Error", f"Failed to save: {e}")
 

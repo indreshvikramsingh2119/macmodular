@@ -1876,7 +1876,6 @@ class ECGTestPage(QWidget):
         
         # Updated metric info to match the image design with consistent color coding
         metric_info = [
-            ("Heart Rate (BPM)", "0", "heart_rate", "#ff6b6b"),  # Red for heart rate
             ("PR Intervals (ms)", "0", "pr_interval", "#4ecdc4"),  # Teal for PR
             ("QRS Complex (ms)", "0", "qrs_duration", "#45b7d1"),  # Blue for QRS
             ("QRS Axis", "0°", "qrs_axis", "#96ceb4"),  # Green for axis
