@@ -191,31 +191,92 @@ class DemoManager:
             
             # Start reading data row by row from CSV with wave speed control
             def read_csv_data():
-                row_index = prefill_needed  # continue after prefill
-                while (not self._stop_event.is_set()) and self._running_demo and row_index < len(df):
-                    # Read data for all leads
-                    for lead in lead_columns:
-                        if lead in self.ecg_test_page.leads:
-                            lead_index = self.ecg_test_page.leads.index(lead)
-                            value = df[lead].iloc[row_index]
+                try:
+                    row_index = prefill_needed  # continue after prefill
+                    consecutive_errors = 0
+                    max_consecutive_errors = 10
+                    
+                    while (not self._stop_event.is_set()) and self._running_demo and row_index < len(df):
+                        try:
+                            # Read data for all leads with error handling
+                            for lead in lead_columns:
+                                try:
+                                    if lead in self.ecg_test_page.leads:
+                                        lead_index = self.ecg_test_page.leads.index(lead)
+                                        
+                                        # Validate row index
+                                        if row_index >= len(df) or row_index < 0:
+                                            print(f"❌ Invalid row index: {row_index}")
+                                            continue
+                                        
+                                        # Get value with validation
+                                        value = df[lead].iloc[row_index]
+                                        
+                                        # Validate value
+                                        if pd.isna(value) or np.isnan(value) or np.isinf(value):
+                                            print(f"❌ Invalid value for {lead} at row {row_index}: {value}")
+                                            value = 0.0
+                                        
+                                        # Convert to float safely
+                                        try:
+                                            value = float(value)
+                                        except (ValueError, TypeError):
+                                            print(f"❌ Cannot convert value to float: {value}")
+                                            value = 0.0
+                                        
+                                        # Update data using numpy roll method with bounds checking
+                                        with self._lock:
+                                            if (hasattr(self.ecg_test_page, 'data') and 
+                                                lead_index < len(self.ecg_test_page.data) and
+                                                len(self.ecg_test_page.data[lead_index]) > 0):
+                                                
+                                                self.ecg_test_page.data[lead_index] = np.roll(
+                                                    self.ecg_test_page.data[lead_index], -1)
+                                                self.ecg_test_page.data[lead_index][-1] = value
+                                            else:
+                                                print(f"❌ Invalid data buffer for lead {lead_index}")
+                                                
+                                except Exception as e:
+                                    print(f"❌ Error processing lead {lead} at row {row_index}: {e}")
+                                    continue
                             
-                            # Update data using numpy roll method
-                            with self._lock:
-                                self.ecg_test_page.data[lead_index] = np.roll(self.ecg_test_page.data[lead_index], -1)
-                                self.ecg_test_page.data[lead_index][-1] = value
-                    
-                    row_index += 1
-                    
-                    # Loop back to beginning if we reach the end 
-                    if row_index >= len(df):
-                        row_index = 0
-                        print("🔄 Restarting ECG data from beginning...")
-                    
-                    # Dynamic delay based on wave speed
-                    # Slower wave speed = longer delay = slower visual movement
-                    base_delay = 0.00667  # 150 samples per second base
-                    actual_delay = base_delay / self.speed_multiplier
-                    time.sleep(actual_delay)
+                            row_index += 1
+                            consecutive_errors = 0  # Reset error counter on success
+                            
+                            # Loop back to beginning if we reach the end 
+                            if row_index >= len(df):
+                                row_index = 0
+                                print("🔄 Restarting ECG data from beginning...")
+                            
+                            # Dynamic delay based on wave speed with error handling
+                            try:
+                                base_delay = 0.004  # 250 samples per second base (matching real hardware)
+                                actual_delay = max(0.001, base_delay / max(0.1, self.speed_multiplier))
+                                time.sleep(actual_delay)
+                            except Exception as e:
+                                print(f"❌ Error in sleep delay: {e}")
+                                time.sleep(0.004)  # Fallback delay
+                                
+                        except Exception as e:
+                            consecutive_errors += 1
+                            print(f"❌ Error in CSV data reading (attempt {consecutive_errors}): {e}")
+                            
+                            if consecutive_errors >= max_consecutive_errors:
+                                print(f"❌ Too many consecutive errors ({consecutive_errors}), stopping demo")
+                                self._stop_event.set()
+                                break
+                            
+                            # Try to recover by skipping problematic row
+                            row_index += 1
+                            if row_index >= len(df):
+                                row_index = 0
+                            
+                            # Short delay before retry
+                            time.sleep(0.01)
+                            
+                except Exception as e:
+                    print(f"❌ Critical error in read_csv_data: {e}")
+                    self._stop_event.set()
             
             # Start CSV data reading in background thread
             self.demo_thread = threading.Thread(target=read_csv_data, name="ECGDemoCSVThread", daemon=True)

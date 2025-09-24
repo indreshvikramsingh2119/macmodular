@@ -18,8 +18,10 @@ import math
 import os
 import json
 import matplotlib.image as mpimg
+import time
 from dashboard.chatbot_dialog import ChatbotDialog
 from utils.settings_manager import SettingsManager
+from utils.crash_logger import get_crash_logger, CrashLogDialog
 
 # Try to import configuration, fallback to defaults if not available
 try:
@@ -144,6 +146,14 @@ class Dashboard(QWidget):
         super().__init__()
         # Settings for wave speed/gain
         self.settings_manager = SettingsManager()
+        
+        # Initialize crash logger
+        self.crash_logger = get_crash_logger()
+        self.crash_logger.log_info("Dashboard initialized", "DASHBOARD_START")
+        
+        # Triple-click counter for heart rate metric
+        self.heart_rate_click_count = 0
+        self.last_heart_rate_click_time = 0
         
         # Set responsive size policy
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -585,6 +595,11 @@ class Dashboard(QWidget):
             val = QLabel(f"{value} {unit}")
             val.setFont(QFont("Arial", 18, QFont.Bold))
             val.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            
+            # Add triple-click functionality to heart rate metric
+            if key == "heart_rate":
+                val.mousePressEvent = self.heart_rate_triple_click
+            
             box.addWidget(lbl)
             box.addWidget(val)
             metrics_layout.addLayout(box)
@@ -924,36 +939,78 @@ class Dashboard(QWidget):
 
 
     def update_ecg(self, frame):
-        # Try to get data from ECG test page if available
-        if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
-            try:
-                # Get Lead II data from ECG test page (index 1 is Lead II)
-                if hasattr(self.ecg_test_page, 'data') and len(self.ecg_test_page.data) > 1:
-                    lead_ii_data = self.ecg_test_page.data[1]  # Lead II is at index 1
-                    if len(lead_ii_data) > 10:
-                        original_data = np.array(lead_ii_data)
-                        
-                        # Get actual sampling rate from ECG test page
-                        actual_sampling_rate = 500  # Default
-                        if hasattr(self.ecg_test_page, 'sampler') and hasattr(self.ecg_test_page.sampler, 'sampling_rate') and self.ecg_test_page.sampler.sampling_rate:
+        try:
+            # Try to get data from ECG test page if available
+            if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
+                try:
+                    # Validate ECG test page data structure
+                    if not hasattr(self.ecg_test_page, 'data') or not self.ecg_test_page.data:
+                        print("❌ ECG test page has no data")
+                        return self._fallback_wave_update(frame)
+                    
+                    if len(self.ecg_test_page.data) <= 1:
+                        print("❌ Insufficient ECG data (need Lead II)")
+                        return self._fallback_wave_update(frame)
+                    
+                    # Get Lead II data from ECG test page (index 1 is Lead II)
+                    lead_ii_data = self.ecg_test_page.data[1]
+                    
+                    # Validate Lead II data
+                    if not isinstance(lead_ii_data, (list, np.ndarray)) or len(lead_ii_data) <= 10:
+                        print("❌ Invalid Lead II data")
+                        return self._fallback_wave_update(frame)
+                    
+                    # Convert to numpy array safely
+                    try:
+                        original_data = np.asarray(lead_ii_data, dtype=float)
+                    except Exception as e:
+                        print(f"❌ Error converting Lead II data to array: {e}")
+                        return self._fallback_wave_update(frame)
+                    
+                    # Check for invalid values
+                    if np.any(np.isnan(original_data)) or np.any(np.isinf(original_data)):
+                        print("❌ Invalid values (NaN/Inf) in Lead II data")
+                        return self._fallback_wave_update(frame)
+                    
+                    # Get actual sampling rate from ECG test page
+                    actual_sampling_rate = 250  # Default to 250Hz
+                    try:
+                        if (hasattr(self.ecg_test_page, 'sampler') and 
+                            hasattr(self.ecg_test_page.sampler, 'sampling_rate') and 
+                            self.ecg_test_page.sampler.sampling_rate):
                             actual_sampling_rate = float(self.ecg_test_page.sampler.sampling_rate)
+                            if actual_sampling_rate <= 0 or actual_sampling_rate > 1000:
+                                actual_sampling_rate = 250
+                    except Exception as e:
+                        print(f"❌ Error getting sampling rate: {e}")
+                        actual_sampling_rate = 250
 
-                        # Determine visible window based on wave speed (display feature only)
-                        try:
-                            wave_speed = float(self.settings_manager.get_wave_speed())  # 12.5 / 25 / 50
-                        except Exception:
+                    # Determine visible window based on wave speed (display feature only)
+                    try:
+                        wave_speed = float(self.settings_manager.get_wave_speed())  # 12.5 / 25 / 50
+                        if wave_speed <= 0:
                             wave_speed = 25.0
-                        # Baseline seconds at 25 mm/s
-                        baseline_seconds = 10.0
-                        # Scale time window: 12.5 => 20s, 25 => 10s, 50 => 5s
-                        seconds_to_show = baseline_seconds * (25.0 / max(1e-6, wave_speed))
-                        window_samples = int(max(50, min(len(original_data), seconds_to_show * actual_sampling_rate)))
+                    except Exception as e:
+                        print(f"❌ Error getting wave speed: {e}")
+                        wave_speed = 25.0
+                    
+                    # Baseline seconds at 25 mm/s
+                    baseline_seconds = 10.0
+                    # Scale time window: 12.5 => 20s, 25 => 10s, 50 => 5s
+                    seconds_to_show = baseline_seconds * (25.0 / max(1e-6, wave_speed))
+                    window_samples = int(max(50, min(len(original_data), seconds_to_show * actual_sampling_rate)))
 
-                        # Slice last window and resample horizontally to fixed display length (no wave gain applied)
+                    # Slice last window and resample horizontally to fixed display length
+                    try:
                         src = original_data[-window_samples:]
+                        
                         # Detrend/center for display only
-                        src_centered = src - np.mean(src)
+                        src_mean = np.mean(src)
+                        if np.isnan(src_mean) or np.isinf(src_mean):
+                            src_mean = 0
+                        src_centered = src - src_mean
                         src_centered = src_centered + 1000  # center vertically for this Matplotlib axis
+                        
                         display_len = len(self.ecg_x)
                         if src_centered.size <= 1:
                             display_y = np.full(display_len, 1000.0)
@@ -961,23 +1018,85 @@ class Dashboard(QWidget):
                             x_src = np.linspace(0.0, 1.0, src_centered.size)
                             x_dst = np.linspace(0.0, 1.0, display_len)
                             display_y = np.interp(x_dst, x_src, src_centered)
+                        
+                        # Validate display data
+                        if np.any(np.isnan(display_y)) or np.any(np.isinf(display_y)):
+                            print("❌ Invalid display data generated")
+                            return self._fallback_wave_update(frame)
+                        
                         self.ecg_line.set_ydata(display_y)
                         
-                        # Calculate and update live ECG metrics using ORIGINAL data with SAME sampling rate
+                    except Exception as e:
+                        print(f"❌ Error processing display data: {e}")
+                        return self._fallback_wave_update(frame)
+                    
+                    # Calculate and update live ECG metrics using ORIGINAL data with SAME sampling rate
+                    try:
                         ecg_metrics = self.calculate_live_ecg_metrics(original_data, sampling_rate=actual_sampling_rate)
                         self.update_dashboard_metrics_live(ecg_metrics)
-                        
-                        return [self.ecg_line]
-            except Exception as e:
-                print("Error getting data from ECG test page:", e)
+                    except Exception as e:
+                        print(f"❌ Error calculating ECG metrics: {e}")
+                        # Continue with display even if metrics fail
+                    
+                    return [self.ecg_line]
+                    
+                except Exception as e:
+                    print(f"❌ Error getting data from ECG test page: {e}")
+                    return self._fallback_wave_update(frame)
+            
+            # No ECG test page available
+            return self._fallback_wave_update(frame)
+            
+        except Exception as e:
+            print(f"❌ Critical error in update_ecg: {e}")
+            return self._fallback_wave_update(frame)
+    
+    def _fallback_wave_update(self, frame):
+        """Fallback wave generation when ECG data is not available"""
+        try:
+            self.ecg_y = np.roll(self.ecg_y, -1)
+            self.ecg_y[-1] = 1000 + 200 * np.sin(2 * np.pi * 2 * self.ecg_x[-1] + frame/10) + 50 * np.random.randn()
+            self.ecg_line.set_ydata(self.ecg_y)
+            # Do not compute/update metrics from mock wave; keep zeros until user starts
+            return [self.ecg_line]
+        except Exception as e:
+            print(f"❌ Error in fallback wave update: {e}")
+            return [self.ecg_line]
+    
+    def heart_rate_triple_click(self, event):
+        """Handle triple-click on heart rate metric to open crash log dialog"""
+        current_time = time.time()
         
-        # Fallback: mock wave
-        self.ecg_y = np.roll(self.ecg_y, -1)
-        self.ecg_y[-1] = 1000 + 200 * np.sin(2 * np.pi * 2 * self.ecg_x[-1] + frame/10) + 50 * np.random.randn()
-        self.ecg_line.set_ydata(self.ecg_y)
-        # Do not compute/update metrics from mock wave; keep zeros until user starts
+        # Check if this is within 1 second of the last click
+        if current_time - self.last_heart_rate_click_time < 1.0:
+            self.heart_rate_click_count += 1
+        else:
+            self.heart_rate_click_count = 1
         
-        return [self.ecg_line]
+        self.last_heart_rate_click_time = current_time
+        
+        # Show click count in terminal
+        print(f"🖱️ Heart Rate Metric Click #{self.heart_rate_click_count}")
+        
+        # If triple-clicked, open crash log dialog
+        if self.heart_rate_click_count >= 3:
+            self.heart_rate_click_count = 0  # Reset counter
+            print("🔧 Triple-click detected! Opening diagnostic dialog...")
+            self.crash_logger.log_info("Triple-click detected on heart rate metric", "TRIPLE_CLICK")
+            self.open_crash_log_dialog()
+        
+        # Call original mousePressEvent if it exists
+        if hasattr(event, 'original_mousePressEvent'):
+            event.original_mousePressEvent(event)
+    
+    def open_crash_log_dialog(self):
+        """Open the crash log diagnostic dialog"""
+        try:
+            dialog = CrashLogDialog(self.crash_logger, self)
+            dialog.exec_()
+        except Exception as e:
+            self.crash_logger.log_error(f"Failed to open crash log dialog: {str(e)}", e, "DIALOG_ERROR")
+            QMessageBox.critical(self, "Error", f"Failed to open diagnostic dialog: {str(e)}")
     
     
     def update_ecg_metrics(self, intervals):
@@ -1074,163 +1193,90 @@ class Dashboard(QWidget):
             "HR_avg": int(HR) if HR.isdigit() else 88,
         }
 
-        # --- UPDATED: Better real ECG graph capture ---
+        # --- Capture last 10 seconds of live ECG data ---
         lead_img_paths = {}
         ordered_leads = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
         
-        print(" Looking for ECG test page...")
+        print(" Capturing last 10 seconds of live ECG data...")
         
-        # Method 1: Check if ecg_test_page exists and has figures
-        if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
-            print(f" Found ecg_test_page: {type(self.ecg_test_page)}")
+        # Get current directory for saving images
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.abspath(os.path.join(current_dir, '..'))
+        
+        # Capture live data from ECG test page
+        if hasattr(self, 'ecg_test_page') and self.ecg_test_page and hasattr(self.ecg_test_page, 'data'):
+            print(f" Found ECG test page with data: {len(self.ecg_test_page.data)} leads")
             
-            # Check if figures array exists
-            if hasattr(self.ecg_test_page, 'figures') and self.ecg_test_page.figures:
-                print(f" Found {len(self.ecg_test_page.figures)} figures in ECGTestPage")
-                
-                for i, lead in enumerate(ordered_leads):
-                    if i < len(self.ecg_test_page.figures):
-                        try:
-                            # MEDICAL GRADE CLEAN GRAPH SAVING
-                            fig = self.ecg_test_page.figures[i]
+            # Calculate 10 seconds of data based on sampling rate
+            sampling_rate = 250  # Default sampling rate
+            if hasattr(self.ecg_test_page, 'sampler') and hasattr(self.ecg_test_page.sampler, 'sampling_rate'):
+                try:
+                    sampling_rate = float(self.ecg_test_page.sampler.sampling_rate)
+                except:
+                    sampling_rate = 250
+            
+            data_points_10_sec = int(sampling_rate * 10)  # 10 seconds of data
+            print(f" Capturing {data_points_10_sec} data points at {sampling_rate}Hz")
+            
+            for i, lead in enumerate(ordered_leads):
+                if i < len(self.ecg_test_page.data) and i < len(self.ecg_test_page.leads):
+                    try:
+                        # Get the last 10 seconds of data for this lead
+                        lead_data = self.ecg_test_page.data[i]
+                        if len(lead_data) > data_points_10_sec:
+                            recent_data = lead_data[-data_points_10_sec:]
+                        else:
+                            recent_data = lead_data
+                        
+                        if len(recent_data) > 0:
+                            # Create a clean plot for the report
+                            import matplotlib.pyplot as plt
+                            import matplotlib
+                            matplotlib.use('Agg')  # Use non-interactive backend
                             
-                            # Clean the figure for medical report
-                            if fig.axes:
-                                ax = fig.axes[0]
-                                
-                                # REMOVE ALL NUMBERS AND LABELS
-                                ax.set_xticks([])          # Remove X-axis numbers
-                                ax.set_yticks([])          # Remove Y-axis numbers
-                                ax.set_xlabel('')          # Remove X label
-                                ax.set_ylabel('')          # Remove Y label
-                                ax.set_title('')           # Remove title
-                                
-                                # Remove axis borders (spines)
-                                for spine in ax.spines.values():
-                                    spine.set_visible(False)
-                                
-                                # Clean background - MAKE TRANSPARENT
-                                ax.set_facecolor('none')          
-                                fig.patch.set_facecolor('none')   
-                                # Remove legend if exists
-                                legend = ax.get_legend()
-                                if legend:
-                                    legend.remove()
-                                
-                                # Make ECG line smooth and medical-grade
-                                for line in ax.lines:
-                                    line.set_linewidth(0.4)       # Ultra-thin 
-                                    line.set_antialiased(True)    # Maximum smoothness
-                                    line.set_color('#000000')     # Pure black
-                                    line.set_alpha(0.9)           # Slightly transparent for medical look
-                                    line.set_solid_capstyle('round')   
-                                    line.set_solid_joinstyle('round')  
-                                
-                                # Add subtle medical-style grid (optional)
-                                ax.grid(True, 
-                                       color='#f0f0f0',          # Very light grey
-                                       linestyle='-', 
-                                       linewidth=0.3, 
-                                       alpha=0.7)
-                                ax.set_axisbelow(True)
+                            fig, ax = plt.subplots(figsize=(8, 2))
                             
-                            # Get absolute path to project root
-                            current_dir = os.path.dirname(os.path.abspath(__file__))
-                            project_root = os.path.join(current_dir, '..')
-                            project_root = os.path.abspath(project_root)
+                            # Plot the 10-second ECG trace
+                            time_axis = np.linspace(0, 10, len(recent_data))  # 10 seconds
+                            ax.plot(time_axis, recent_data, color='black', linewidth=0.8)
                             
-                            img_path = os.path.join(project_root, f"lead_{lead}.png")
+                            # Clean medical-style formatting
+                            ax.set_xlim(0, 10)
+                            ax.set_xticks([0, 2, 4, 6, 8, 10])
+                            ax.set_xticklabels(['0s', '2s', '4s', '6s', '8s', '10s'])
+                            ax.set_ylabel('Amplitude (mV)')
+                            ax.set_title(f'Lead {lead} - Last 10 seconds', fontsize=10, fontweight='bold')
                             
-                            # Save medical-grade image
+                            # Add subtle grid
+                            ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+                            ax.set_axisbelow(True)
+                            
+                            # Clean background
+                            ax.set_facecolor('white')
+                            fig.patch.set_facecolor('white')
+                            
+                            # Save the image
+                            img_path = os.path.join(project_root, f"lead_{lead}_10sec.png")
                             fig.savefig(img_path, 
-                                      bbox_inches='tight',     # Remove extra space
-                                      pad_inches=0.05,         # Minimal padding
-                                      dpi=200,                 # High resolution for print
-                                      facecolor='none',        # Transparent
-                                      edgecolor='none',        # No border
-                                      transparent=True)       # Enable transparency
+                                      bbox_inches='tight', 
+                                      pad_inches=0.1, 
+                                      dpi=150, 
+                                      facecolor='white',
+                                      edgecolor='none')
                             
+                            plt.close(fig)  # Close to free memory
                             lead_img_paths[lead] = img_path
                             
-                            print(f" Saved medical-grade Lead {lead}: {img_path}")
+                            print(f" ✅ Captured 10s Lead {lead}: {len(recent_data)} samples")
+                        else:
+                            print(f" ⚠️ No data available for Lead {lead}")
                             
-                        except Exception as e:
-                            print(f" Error capturing Lead {lead}: {e}")
-                    else:
-                        print(f"  No figure available for Lead {lead} (index {i})")
-            
-            # Method 2: Check canvases if figures not available
-            elif hasattr(self.ecg_test_page, 'canvases') and self.ecg_test_page.canvases:
-                print(f" Found {len(self.ecg_test_page.canvases)} canvases in ECGTestPage")
-                
-                for i, lead in enumerate(ordered_leads):
-                    if i < len(self.ecg_test_page.canvases):
-                        try:
-                            canvas = self.ecg_test_page.canvases[i]
-                            fig = canvas.figure
-                            
-                            # MEDICAL GRADE CLEAN GRAPH SAVING (same as above)
-                            if fig.axes:
-                                ax = fig.axes[0]
-                                
-                                # REMOVE ALL NUMBERS AND LABELS
-                                ax.set_xticks([])         
-                                ax.set_yticks([])          
-                                ax.set_xlabel('')         
-                                ax.set_ylabel('')          
-                                ax.set_title('')           
-                                
-                                # Remove axis borders
-                                for spine in ax.spines.values():
-                                    spine.set_visible(False)
-                                
-                                # Clean background - MAKE TRANSPARENT  
-                                ax.set_facecolor('none')          # Transparent axis
-                                fig.patch.set_facecolor('none')   # Transparent figure
-                                
-                                # Remove legend
-                                legend = ax.get_legend()
-                                if legend:
-                                    legend.remove()
-                                
-                                # Medical-grade line styling
-                                for line in ax.lines:
-                                    line.set_linewidth(0.4)       # Ultra-thin like reference
-                                    line.set_antialiased(True)
-                                    line.set_color('#000000')
-                                    line.set_alpha(0.9)
-                                    line.set_solid_capstyle('round')   # Rounded line endings
-                                    line.set_solid_joinstyle('round')  # Rounded line joints
-                                
-                                # Subtle medical grid
-                                ax.grid(True, color='#f0f0f0', linestyle='-', linewidth=0.3, alpha=0.7)
-                                ax.set_axisbelow(True)
-                            
-                            # Save path
-                            current_dir = os.path.dirname(os.path.abspath(__file__))
-                            project_root = os.path.join(current_dir, '..')
-                            project_root = os.path.abspath(project_root)
-                            
-                            img_path = os.path.join(project_root, f"lead_{lead}.png")
-                            
-                            # Save medical-grade image
-                            fig.savefig(img_path, 
-                                      bbox_inches='tight',
-                                      pad_inches=0.05,
-                                      dpi=200,
-                                      facecolor='none',
-                                      edgecolor='none',
-                                      transparent=True)
-                            
-                            lead_img_paths[lead] = img_path
-                            print(f"Saved clean Lead {lead}")
-                            
-                        except Exception as e:
-                            print(f" Error capturing Lead {lead}: {e}")
-            else:
-                print(" No figures or canvases found in ECGTestPage")
+                    except Exception as e:
+                        print(f" ❌ Error capturing Lead {lead}: {e}")
+                else:
+                    print(f" ⚠️ Lead {lead} not available (index {i})")
         else:
-            print(" No ecg_test_page found in dashboard")
+            print(" ❌ No ECG test page or data available for capture")
         
         # Method 3: Check current stack widget for ECG pages
         if not lead_img_paths and hasattr(self, 'page_stack'):

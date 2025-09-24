@@ -2,6 +2,9 @@ import sys
 import time
 import numpy as np
 from pyparsing import line
+import logging
+import traceback
+from utils.crash_logger import get_crash_logger
 try:
     import serial
     import serial.tools.list_ports
@@ -16,9 +19,19 @@ except ImportError:
         def readline(self): return b''
     class SerialException(Exception): pass
     serial = type('Serial', (), {'Serial': Serial, 'SerialException': SerialException})()
-    serial.tools = type('Tools', (), {'list_ports': type('ListPorts', (), {'comports': lambda: []})()})()
+    class MockComports:
+        @staticmethod
+        def comports(*args, **kwargs):
+            return []
+    serial.tools = type('Tools', (), {'list_ports': MockComports()})()
 import csv
-import cv2
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    print("⚠️ OpenCV (cv2) module not available - some features disabled")
+    CV2_AVAILABLE = False
+    cv2 = None
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QGroupBox, QFileDialog,
@@ -696,7 +709,17 @@ class ECGTestPage(QWidget):
         self.leads = self.LEADS_MAP[test_name]
         self.buffer_size = 2000  # Increased buffer size for all leads
         # Use GitHub version data structure: list of numpy arrays for all 12 leads
-        self.data = [np.zeros(HISTORY_LENGTH) for _ in range(12)]
+        # Initialize data buffers with memory management
+        self.data = [np.zeros(HISTORY_LENGTH, dtype=np.float32) for _ in range(12)]
+        
+        # Memory management
+        self.max_buffer_size = 10000  # Maximum buffer size to prevent memory issues
+        self.memory_check_interval = 1000  # Check memory every 1000 updates
+        self.update_count = 0
+        
+        # Initialize crash logger
+        self.crash_logger = get_crash_logger()
+        self.crash_logger.log_info("ECG Test Page initialized", "ECG_TEST_PAGE_START")
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_plots)
         self.serial_reader = None
@@ -1107,7 +1130,7 @@ class ECGTestPage(QWidget):
         self.start_btn = QPushButton("Start")
         self.stop_btn = QPushButton("Stop")
         self.ports_btn = QPushButton("Ports")
-        self.export_pdf_btn = QPushButton("Export as PDF")
+        self.generate_report_btn = QPushButton("Generate Report")
         self.export_csv_btn = QPushButton("Export as CSV")
         self.sequential_btn = QPushButton("Show All Leads Sequentially")
         self.twelve_leads_btn = QPushButton("12:1")
@@ -1115,7 +1138,7 @@ class ECGTestPage(QWidget):
         self.back_btn = QPushButton("Back")
 
         # Make all buttons responsive and compact
-        for btn in [self.start_btn, self.stop_btn, self.ports_btn, self.export_pdf_btn, self.export_csv_btn, 
+        for btn in [self.start_btn, self.stop_btn, self.ports_btn, self.generate_report_btn, self.export_csv_btn, 
                    self.sequential_btn, self.twelve_leads_btn, self.six_leads_btn, self.back_btn]:
             btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             btn.setMinimumHeight(28)  # Reduced from 32px
@@ -1155,7 +1178,7 @@ class ECGTestPage(QWidget):
         self.start_btn.setStyleSheet(green_color)
         self.stop_btn.setStyleSheet(green_color)
         self.ports_btn.setStyleSheet(green_color)
-        self.export_pdf_btn.setStyleSheet(green_color)
+        self.generate_report_btn.setStyleSheet(green_color)
         self.export_csv_btn.setStyleSheet(green_color)
         self.sequential_btn.setStyleSheet(green_color)
         self.twelve_leads_btn.setStyleSheet(green_color)
@@ -1165,7 +1188,7 @@ class ECGTestPage(QWidget):
         btn_layout.addWidget(self.start_btn)
         btn_layout.addWidget(self.stop_btn)
         btn_layout.addWidget(self.ports_btn)
-        btn_layout.addWidget(self.export_pdf_btn)
+        btn_layout.addWidget(self.generate_report_btn)
         btn_layout.addWidget(self.export_csv_btn)
         btn_layout.addWidget(self.sequential_btn)
         btn_layout.addWidget(self.twelve_leads_btn)
@@ -1180,7 +1203,7 @@ class ECGTestPage(QWidget):
         self.start_btn.setToolTip("Start ECG recording from the selected port")
         self.stop_btn.setToolTip("Stop current ECG recording")
         self.ports_btn.setToolTip("Configure COM port and baud rate settings")
-        self.export_pdf_btn.setToolTip("Export ECG data as PDF report")
+        self.generate_report_btn.setToolTip("Generate ECG PDF report and add to Recent Reports")
         self.export_csv_btn.setToolTip("Export ECG data as CSV file")
 
         # Add help button
@@ -1201,7 +1224,7 @@ class ECGTestPage(QWidget):
         help_btn.clicked.connect(self.show_help)
 
         self.ports_btn.clicked.connect(self.show_ports_dialog)
-        self.export_pdf_btn.clicked.connect(self.export_pdf)
+        self.generate_report_btn.clicked.connect(self.generate_pdf_report)
         self.export_csv_btn.clicked.connect(self.export_csv)
         self.sequential_btn.clicked.connect(self.show_sequential_view)
         self.twelve_leads_btn.clicked.connect(self.twelve_leads_overlay)
@@ -1252,41 +1275,88 @@ class ECGTestPage(QWidget):
         Calculate 12-lead ECG from 8-channel hardware data
         Hardware sends: [L1, V4, V5, Lead 2, V3, V6, V1, V2] in that order
         """
-        if len(channel_data) < 8:
-            # Pad with zeros if not enough channels
-            channel_data = channel_data + [0] * (8 - len(channel_data))
-        
-        # Map hardware channels to standard positions
-        L1 = channel_data[0] if len(channel_data) > 0 else 0      # Lead I
-        V4_hw = channel_data[1] if len(channel_data) > 1 else 0   # V4 from hardware
-        V5_hw = channel_data[2] if len(channel_data) > 2 else 0   # V5 from hardware
-        II = channel_data[3] if len(channel_data) > 3 else 0      # Lead II
-        V3_hw = channel_data[4] if len(channel_data) > 4 else 0   # V3 from hardware
-        V6_hw = channel_data[5] if len(channel_data) > 5 else 0   # V6 from hardware
-        V1 = channel_data[6] if len(channel_data) > 6 else 0      # V1 from hardware
-        V2 = channel_data[7] if len(channel_data) > 7 else 0      # V2 from hardware
-        
-        # Calculate derived leads using standard ECG formulas
-        I = L1  # Lead I is directly from hardware
-        
-        # Calculate Lead III from Lead I and Lead II
-        III = II - I if II != 0 and I != 0 else 0
-        
-        # Calculate augmented leads
-        aVR = -(I + II) / 2 if I != 0 and II != 0 else 0
-        aVL = (I - II) / 2 if I != 0 and II != 0 else 0
-        aVF = (II - I) / 2 if I != 0 and II != 0 else 0
-        
-        # Use hardware V leads directly
-        V1 = V1
-        V2 = V2
-        V3 = V3_hw
-        V4 = V4_hw
-        V5 = V5_hw
-        V6 = V6_hw
-        
-        # Return 12-lead ECG data in standard order
-        return [I, II, III, aVR, aVL, aVF, V1, V2, V3, V4, V5, V6]
+        try:
+            # Validate input data
+            if not channel_data or not isinstance(channel_data, (list, tuple, np.ndarray)):
+                print("❌ Invalid channel data format")
+                return [0] * 12
+            
+            # Convert to list if numpy array
+            if isinstance(channel_data, np.ndarray):
+                channel_data = channel_data.tolist()
+            
+            # Ensure we have at least 8 channels
+            if len(channel_data) < 8:
+                # Pad with zeros if not enough channels
+                channel_data = channel_data + [0] * (8 - len(channel_data))
+                print(f"⚠️ Padded channel data to 8 channels: {len(channel_data)}")
+            
+            # Validate all values are numeric
+            for i, val in enumerate(channel_data[:8]):
+                try:
+                    float(val)
+                except (ValueError, TypeError):
+                    print(f"❌ Invalid numeric value at channel {i}: {val}")
+                    channel_data[i] = 0
+            
+            # Map hardware channels to standard positions with bounds checking
+            L1 = float(channel_data[0]) if len(channel_data) > 0 else 0      # Lead I
+            V4_hw = float(channel_data[1]) if len(channel_data) > 1 else 0   # V4 from hardware
+            V5_hw = float(channel_data[2]) if len(channel_data) > 2 else 0   # V5 from hardware
+            II = float(channel_data[3]) if len(channel_data) > 3 else 0      # Lead II
+            V3_hw = float(channel_data[4]) if len(channel_data) > 4 else 0   # V3 from hardware
+            V6_hw = float(channel_data[5]) if len(channel_data) > 5 else 0   # V6 from hardware
+            V1 = float(channel_data[6]) if len(channel_data) > 6 else 0      # V1 from hardware
+            V2 = float(channel_data[7]) if len(channel_data) > 7 else 0      # V2 from hardware
+            
+            # Calculate derived leads using standard ECG formulas with error handling
+            I = L1  # Lead I is directly from hardware
+            
+            # Calculate Lead III from Lead I and Lead II
+            try:
+                III = II - I
+            except Exception:
+                III = 0
+            
+            # Calculate augmented leads with safe division
+            try:
+                aVR = -(I + II) / 2
+            except Exception:
+                aVR = 0
+                
+            try:
+                aVL = (I - II) / 2
+            except Exception:
+                aVL = 0
+                
+            try:
+                aVF = (II - I) / 2
+            except Exception:
+                aVF = 0
+            
+            # Use hardware V leads directly
+            V1 = V1
+            V2 = V2
+            V3 = V3_hw
+            V4 = V4_hw
+            V5 = V5_hw
+            V6 = V6_hw
+            
+            # Return 12-lead ECG data in standard order
+            result = [I, II, III, aVR, aVL, aVF, V1, V2, V3, V4, V5, V6]
+            
+            # Validate result
+            for i, val in enumerate(result):
+                if not isinstance(val, (int, float)) or np.isnan(val) or np.isinf(val):
+                    print(f"❌ Invalid result value at lead {i}: {val}")
+                    result[i] = 0
+            
+            return result
+            
+        except Exception as e:
+            print(f"❌ Critical error in calculate_12_leads_from_8_channels: {e}")
+            # Return safe default values
+            return [0] * 12
 
     def calculate_ecg_metrics(self):
         """Calculate ECG metrics: Heart Rate, PR Interval, QRS Complex, QRS Axis, ST Interval"""
@@ -1317,60 +1387,144 @@ class ECGTestPage(QWidget):
     def calculate_heart_rate(self, lead_data):
         """Calculate heart rate from Lead II data using R-R intervals"""
         try:
-            if len(lead_data) < 200:  # Need sufficient data
+            # Validate input data
+            if not isinstance(lead_data, (list, np.ndarray)) or len(lead_data) < 200:
+                print("❌ Insufficient data for heart rate calculation")
                 return 60  # Default fallback
             
-            # Apply bandpass filter to enhance R-peaks (0.5-40 Hz)
-            from scipy.signal import butter, filtfilt
-            # Use measured sampling rate if available; default to 500 Hz
-            fs = 500
-            if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
-                fs = float(self.sampler.sampling_rate)
-            nyquist = fs / 2
-            low = 0.5 / nyquist
-            high = 40 / nyquist
-            b, a = butter(4, [low, high], btype='band')
-            filtered_signal = filtfilt(b, a, lead_data)
+            # Convert to numpy array for processing
+            try:
+                lead_data = np.asarray(lead_data, dtype=float)
+            except Exception as e:
+                print(f"❌ Error converting lead data to array: {e}")
+                return 60
             
-            # Find R-peaks using scipy
-            from scipy.signal import find_peaks
-            peaks, properties = find_peaks(
-                filtered_signal,
-                height=np.mean(filtered_signal) + 0.5 * np.std(filtered_signal),
-                distance=int(0.4 * fs),  # Minimum 0.4 seconds between peaks (150 BPM max)
-                prominence=np.std(filtered_signal) * 0.3
-            )
+            # Check for invalid values
+            if np.any(np.isnan(lead_data)) or np.any(np.isinf(lead_data)):
+                print("❌ Invalid values (NaN/Inf) in lead data")
+                return 60
+            
+            # Use measured sampling rate if available; default to 250 Hz
+            fs = 250
+            try:
+                if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
+                    fs = float(self.sampler.sampling_rate)
+                    if fs <= 0 or fs > 1000:  # Sanity check
+                        fs = 250
+            except Exception as e:
+                print(f"❌ Error getting sampling rate: {e}")
+                fs = 250
+            
+            # Apply bandpass filter to enhance R-peaks (0.5-40 Hz)
+            try:
+                from scipy.signal import butter, filtfilt
+                nyquist = fs / 2
+                low = max(0.001, 0.5 / nyquist)  # Prevent division by zero
+                high = min(0.999, 40 / nyquist)  # Prevent invalid filter
+                
+                if low >= high:
+                    print("❌ Invalid filter parameters")
+                    return 60
+                
+                b, a = butter(4, [low, high], btype='band')
+                filtered_signal = filtfilt(b, a, lead_data)
+                
+                # Validate filtered signal
+                if np.any(np.isnan(filtered_signal)) or np.any(np.isinf(filtered_signal)):
+                    print("❌ Filter produced invalid values")
+                    return 60
+                    
+            except Exception as e:
+                print(f"❌ Error in signal filtering: {e}")
+                return 60
+            
+            # Find R-peaks using scipy with robust parameters
+            try:
+                from scipy.signal import find_peaks
+                
+                # Calculate robust thresholds
+                signal_mean = np.mean(filtered_signal)
+                signal_std = np.std(filtered_signal)
+                
+                if signal_std == 0:
+                    print("❌ No signal variation detected")
+                    return 60
+                
+                height_threshold = signal_mean + 0.5 * signal_std
+                prominence_threshold = signal_std * 0.3
+                min_distance = max(1, int(0.4 * fs))  # Minimum 0.4 seconds between peaks
+                
+                peaks, properties = find_peaks(
+                    filtered_signal,
+                    height=height_threshold,
+                    distance=min_distance,
+                    prominence=prominence_threshold
+                )
+                
+            except Exception as e:
+                print(f"❌ Error in peak detection: {e}")
+                return 60
             
             if len(peaks) < 2:
+                print(f"❌ Insufficient peaks detected: {len(peaks)}")
                 return 60  # Not enough peaks detected
             
             # Calculate R-R intervals in milliseconds
-            rr_intervals_ms = np.diff(peaks) * (1000 / fs)
+            try:
+                rr_intervals_ms = np.diff(peaks) * (1000 / fs)
+                
+                # Validate intervals
+                if len(rr_intervals_ms) == 0:
+                    print("❌ No R-R intervals calculated")
+                    return 60
+                
+            except Exception as e:
+                print(f"❌ Error calculating R-R intervals: {e}")
+                return 60
             
             # Filter physiologically reasonable intervals (300-2000 ms)
-            valid_intervals = rr_intervals_ms[(rr_intervals_ms >= 300) & (rr_intervals_ms <= 2000)]
-            
-            if len(valid_intervals) == 0:
-                return 60  # No valid intervals
+            try:
+                valid_intervals = rr_intervals_ms[(rr_intervals_ms >= 300) & (rr_intervals_ms <= 2000)]
+                
+                if len(valid_intervals) == 0:
+                    print("❌ No valid R-R intervals found")
+                    return 60  # No valid intervals
+                
+            except Exception as e:
+                print(f"❌ Error filtering intervals: {e}")
+                return 60
             
             # Calculate heart rate from median R-R interval
-            median_rr = np.median(valid_intervals)
-            heart_rate = 60000 / median_rr  # Convert to BPM
-            
-            # Ensure reasonable range (40-200 BPM)
-            heart_rate = max(40, min(200, heart_rate))
-            
-            print(f"[DEBUG] Heart Rate Calculation:")
-            print(f"  Signal length: {len(lead_data)}")
-            print(f"  Peaks found: {len(peaks)}")
-            print(f"  R-R intervals (ms): {rr_intervals_ms[:5]}...")
-            print(f"  Valid intervals: {len(valid_intervals)} out of {len(rr_intervals_ms)}")
-            print(f"  Calculated heart rate: {int(heart_rate)} BPM")
-            
-            return int(heart_rate)
+            try:
+                median_rr = np.median(valid_intervals)
+                if median_rr <= 0:
+                    print("❌ Invalid median R-R interval")
+                    return 60
+                
+                heart_rate = 60000 / median_rr  # Convert to BPM
+                
+                # Ensure reasonable range (40-200 BPM)
+                heart_rate = max(40, min(200, heart_rate))
+                
+                # Validate final result
+                if np.isnan(heart_rate) or np.isinf(heart_rate):
+                    print("❌ Invalid heart rate calculated")
+                    return 60
+                
+                print(f"[DEBUG] Heart Rate Calculation:")
+                print(f"  Signal length: {len(lead_data)}")
+                print(f"  Peaks found: {len(peaks)}")
+                print(f"  Valid intervals: {len(valid_intervals)} out of {len(rr_intervals_ms)}")
+                print(f"  Calculated heart rate: {int(heart_rate)} BPM")
+                
+                return int(heart_rate)
+                
+            except Exception as e:
+                print(f"❌ Error in final heart rate calculation: {e}")
+                return 60
             
         except Exception as e:
-            print(f"[DEBUG] Heart Rate Calculation Error: {e}")
+            print(f"❌ Critical error in calculate_heart_rate: {e}")
             return 60  # Fallback to 60 BPM
 
     def calculate_pr_interval(self, lead_data):
@@ -3358,13 +3512,155 @@ class ECGTestPage(QWidget):
             import traceback
             traceback.print_exc()
 
-    def export_pdf(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Export ECG Data as PDF", "", "PDF Files (*.pdf)")
-        if path:
-            from matplotlib.backends.backend_pdf import PdfPages
-            with PdfPages(path) as pdf:
-                for fig in self.figures:
-                    pdf.savefig(fig)
+    def generate_pdf_report(self):
+        from PyQt5.QtWidgets import QFileDialog, QMessageBox
+        import datetime, os, json, shutil
+        from ecg.ecg_report_generator import generate_ecg_report
+
+        # Capture last 10 seconds of live ECG data
+        lead_img_paths = {}
+        ordered_leads = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+        
+        print(" Capturing last 10 seconds of live ECG data...")
+        
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.abspath(os.path.join(current_dir, '..'))
+        
+        # Calculate 10 seconds of data based on sampling rate
+        sampling_rate = 250  # Default sampling rate
+        if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate'):
+            try:
+                sampling_rate = float(self.sampler.sampling_rate)
+            except:
+                sampling_rate = 250
+        
+        data_points_10_sec = int(sampling_rate * 10)  # 10 seconds of data
+        print(f" Capturing {data_points_10_sec} data points at {sampling_rate}Hz")
+        
+        for i, lead in enumerate(ordered_leads):
+            if i < len(self.data) and i < len(self.leads):
+                try:
+                    # Get the last 10 seconds of data for this lead
+                    lead_data = self.data[i]
+                    if len(lead_data) > data_points_10_sec:
+                        recent_data = lead_data[-data_points_10_sec:]
+                    else:
+                        recent_data = lead_data
+                    
+                    if len(recent_data) > 0:
+                        # Create a clean plot for the report
+                        import matplotlib.pyplot as plt
+                        import matplotlib
+                        matplotlib.use('Agg')  # Use non-interactive backend
+                        
+                        fig, ax = plt.subplots(figsize=(8, 2))
+                        
+                        # Plot the 10-second ECG trace
+                        time_axis = np.linspace(0, 10, len(recent_data))  # 10 seconds
+                        ax.plot(time_axis, recent_data, color='black', linewidth=0.8)
+                        
+                        # Clean medical-style formatting
+                        ax.set_xlim(0, 10)
+                        ax.set_xticks([0, 2, 4, 6, 8, 10])
+                        ax.set_xticklabels(['0s', '2s', '4s', '6s', '8s', '10s'])
+                        ax.set_ylabel('Amplitude (mV)')
+                        ax.set_title(f'Lead {lead} - Last 10 seconds', fontsize=10, fontweight='bold')
+                        
+                        # Add subtle grid
+                        ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+                        ax.set_axisbelow(True)
+                        
+                        # Clean background
+                        ax.set_facecolor('white')
+                        fig.patch.set_facecolor('white')
+                        
+                        # Save the image
+                        img_path = os.path.join(project_root, f"lead_{lead}_10sec.png")
+                        fig.savefig(img_path, 
+                                  bbox_inches='tight', 
+                                  pad_inches=0.1, 
+                                  dpi=150, 
+                                  facecolor='white',
+                                  edgecolor='none')
+                        
+                        plt.close(fig)  # Close to free memory
+                        lead_img_paths[lead] = img_path
+                        
+                        print(f" ✅ Captured 10s Lead {lead}: {len(recent_data)} samples")
+                    else:
+                        print(f" ⚠️ No data available for Lead {lead}")
+                        
+                except Exception as e:
+                    print(f" ❌ Error capturing Lead {lead}: {e}")
+            else:
+                print(f" ⚠️ Lead {lead} not available (index {i})")
+
+        # Ask user for destination
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save ECG Report",
+            f"ECG_Report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+            "PDF Files (*.pdf)"
+        )
+        if not filename:
+            return
+
+        try:
+            ecg_data = {"HR": 0, "beat": 0, "PR": 0, "QRS": 0, "QT": 0, "QTc": 0, "ST": 0, "HR_max": 0, "HR_min": 0, "HR_avg": 0}
+            generate_ecg_report(filename, ecg_data, lead_img_paths, None, self)
+
+            QMessageBox.information(self, "Success", f"ECG Report generated successfully!\nSaved as: {filename}")
+
+            # Dual-save to app reports/ and update index.json
+            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+            reports_dir = os.path.abspath(os.path.join(base_dir, '..', 'reports'))
+            os.makedirs(reports_dir, exist_ok=True)
+            dst_basename = os.path.basename(filename)
+            dst_path = os.path.join(reports_dir, dst_basename)
+            if os.path.abspath(filename) != os.path.abspath(dst_path):
+                counter = 1
+                name, ext = os.path.splitext(dst_basename)
+                while os.path.exists(dst_path):
+                    dst_basename = f"{name}_{counter}{ext}"
+                    dst_path = os.path.join(reports_dir, dst_basename)
+                    counter += 1
+                shutil.copyfile(filename, dst_path)
+            index_path = os.path.join(reports_dir, 'index.json')
+            items = []
+            if os.path.exists(index_path):
+                try:
+                    with open(index_path, 'r') as f:
+                        items = json.load(f)
+                except Exception:
+                    items = []
+            now = datetime.datetime.now()
+            meta = {
+                'filename': os.path.basename(dst_path),
+                'title': 'ECG Report',
+                'patient': '',
+                'date': now.strftime('%Y-%m-%d'),
+                'time': now.strftime('%H:%M:%S')
+            }
+            items = [meta] + items
+            items = items[:10]
+            with open(index_path, 'w') as f:
+                json.dump(items, f, indent=2)
+
+            # Try refreshing dashboard recent reports if available
+            try:
+                widget = self
+                for _ in range(10):  # prevent infinite loops
+                    if widget is None:
+                        break
+                    if hasattr(widget, 'refresh_recent_reports_ui'):
+                        widget.refresh_recent_reports_ui()
+                        break
+                    widget = widget.parent()
+            except Exception:
+                pass
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to generate PDF: {str(e)}")
 
     def export_csv(self):
         """Export ECG data to CSV file in the same format as dummydata.csv"""
@@ -4372,97 +4668,219 @@ class ECGTestPage(QWidget):
 
     def update_plots(self):
         """Update all ECG plots with current data using PyQtGraph (GitHub version)"""
-        if not self.serial_reader or not self.serial_reader.running:
-            # For demo mode, just update the plots based on wave speed setting
-            try:
-                wave_speed = float(self.settings_manager.get_wave_speed())
-            except Exception:
-                wave_speed = 25.0
+        try:
+            # Memory management - check every N updates
+            self.update_count += 1
+            if self.update_count % self.memory_check_interval == 0:
+                self._manage_memory()
+            if not self.serial_reader or not self.serial_reader.running:
+                # For demo mode, just update the plots based on wave speed setting
+                try:
+                    wave_speed = float(self.settings_manager.get_wave_speed())
+                except Exception:
+                    wave_speed = 25.0
 
-            # Base time window at 25 mm/s (e.g., 10 seconds) for display
-            baseline_seconds = 10.0
-            seconds_scale = (25.0 / max(1e-6, wave_speed))
-            seconds_to_show = baseline_seconds * seconds_scale  # 12.5 => 20s, 50 => 5s
+                # Base time window at 25 mm/s (e.g., 10 seconds) for display
+                baseline_seconds = 10.0
+                seconds_scale = (25.0 / max(1e-6, wave_speed))
+                seconds_to_show = baseline_seconds * seconds_scale  # 12.5 => 20s, 50 => 5s
 
-            for i in range(len(self.data_lines)):
-                if i < len(self.data):
-                    raw = np.asarray(self.data[i])
-                    # Apply wave gain scaling: 5/10/20 mm/mV
-                    gain = 1.0
+                for i in range(len(self.data_lines)):
                     try:
-                        gain = float(self.settings_manager.get_wave_gain()) / 10.0  # 10=>1x, 20=>2x, 5=>0.5x
-                    except Exception:
-                        pass
-                    raw = (raw - np.nanmean(raw)) * gain
+                        if i < len(self.data):
+                            raw = np.asarray(self.data[i])
+                            # Apply wave gain scaling: 5/10/20 mm/mV
+                            gain = 1.0
+                            try:
+                                gain = float(self.settings_manager.get_wave_gain()) / 10.0  # 10=>1x, 20=>2x, 5=>0.5x
+                            except Exception:
+                                pass
+                            raw = (raw - np.nanmean(raw)) * gain
 
-                    # Determine window in samples using sampler if available
-                    fs = 500
-                    if hasattr(self, 'sampler') and getattr(self.sampler, 'sampling_rate', None):
-                        try:
-                            fs = float(self.sampler.sampling_rate)
-                        except Exception:
+                            # Determine window in samples using sampler if available
                             fs = 500
-                    window_len = int(max(50, min(len(raw), seconds_to_show * fs)))
-                    src = raw[-window_len:]
+                            if hasattr(self, 'sampler') and getattr(self.sampler, 'sampling_rate', None):
+                                try:
+                                    fs = float(self.sampler.sampling_rate)
+                                except Exception:
+                                    fs = 500
+                            window_len = int(max(50, min(len(raw), seconds_to_show * fs)))
+                            src = raw[-window_len:]
 
-                    # Resample to fixed display length preserving visible time scaling
-                    display_len = self.buffer_size if hasattr(self, 'buffer_size') else 1000
-                    if src.size < 2:
-                        resampled = np.zeros(display_len)
+                            # Resample to fixed display length preserving visible time scaling
+                            display_len = self.buffer_size if hasattr(self, 'buffer_size') else 1000
+                            if src.size < 2:
+                                resampled = np.zeros(display_len)
+                            else:
+                                x_src = np.linspace(0.0, 1.0, src.size)
+                                x_dst = np.linspace(0.0, 1.0, display_len)
+                                resampled = np.interp(x_dst, x_src, src)
+
+                            self.data_lines[i].setData(resampled)
+                            self.update_plot_y_range(i)
+                    except Exception as e:
+                        print(f"❌ Error updating plot {i}: {e}")
+                        continue
+                return
+
+            # Read a batch of data to keep up (from GitHub version)
+            lines_processed = 0
+            max_attempts = 20  # Prevent infinite loops
+            
+            while lines_processed < max_attempts:
+                try:
+                    all_8_leads = self.serial_reader.read_value()
+                    if all_8_leads:
+                        # Calculate 12-lead ECG from 8-channel data using standard formulas
+                        all_12_leads = self.calculate_12_leads_from_8_channels(all_8_leads)
+                        
+                        # Update data buffers with filtering
+                        for i in range(len(self.leads)):
+                            try:
+                                if i < len(self.data) and i < len(all_12_leads):
+                                    self.data[i] = np.roll(self.data[i], -1)
+                                    # Apply medical-grade real-time smoothing
+                                    smoothed_value = self.apply_realtime_smoothing(all_12_leads[i], i)
+                                    self.data[i][-1] = smoothed_value
+                            except Exception as e:
+                                print(f"❌ Error updating data buffer {i}: {e}")
+                                continue
+                        
+                        # Update sampling rate
+                        try:
+                            if hasattr(self, 'sampler'):
+                                sampling_rate = self.sampler.add_sample()
+                                if sampling_rate > 0 and hasattr(self, 'metric_labels') and 'sampling_rate' in self.metric_labels:
+                                    self.metric_labels['sampling_rate'].setText(f"{sampling_rate:.1f} Hz")
+                        except Exception as e:
+                            print(f"❌ Error updating sampling rate: {e}")
+                        
+                        lines_processed += 1
                     else:
-                        x_src = np.linspace(0.0, 1.0, src.size)
-                        x_dst = np.linspace(0.0, 1.0, display_len)
-                        resampled = np.interp(x_dst, x_src, src)
+                        break # No more data in buffer
+                except Exception as e:
+                    print(f"❌ Error reading serial data: {e}")
+                    break
 
-                    self.data_lines[i].setData(resampled)
-                    self.update_plot_y_range(i)
-            return
-
-        # Read a batch of data to keep up (from GitHub version)
-        lines_processed = 0
-        while lines_processed < 20: # Process up to 20 readings per GUI update
-            all_8_leads = self.serial_reader.read_value()
-            if all_8_leads:
-                # Calculate 12-lead ECG from 8-channel data using standard formulas
-                all_12_leads = self.calculate_12_leads_from_8_channels(all_8_leads)
-                
-                # Update data buffers with filtering
+            # If we got any new data, update all plots at once
+            if lines_processed > 0:
                 for i in range(len(self.leads)):
-                    if i < len(self.data) and i < len(all_12_leads):
-                        self.data[i] = np.roll(self.data[i], -1)
-                        # Apply medical-grade real-time smoothing
-                        smoothed_value = self.apply_realtime_smoothing(all_12_leads[i], i)
-                        self.data[i][-1] = smoothed_value
+                    try:
+                        if i < len(self.data_lines):
+                            # Update plot data
+                            self.data_lines[i].setData(self.data[i])
+                            
+                            # Update Y-axis range based on actual data
+                            self.update_plot_y_range(i)
+                    except Exception as e:
+                        print(f"❌ Error updating plot {i}: {e}")
+                        continue
                 
-                # Update sampling rate
-                sampling_rate = self.sampler.add_sample()
-                if sampling_rate > 0 and hasattr(self, 'metric_labels') and 'sampling_rate' in self.metric_labels:
-                    self.metric_labels['sampling_rate'].setText(f"{sampling_rate:.1f} Hz")
+                # Calculate and update ECG metrics
+                try:
+                    self.calculate_ecg_metrics()
+                except Exception as e:
+                    print(f"❌ Error calculating ECG metrics: {e}")
                 
-                lines_processed += 1
-            else:
-                break # No more data in buffer
-
-        # If we got any new data, update all plots at once
-        if lines_processed > 0:
-            for i in range(len(self.leads)):
-                if i < len(self.data_lines):
-                    # Update plot data
-                    self.data_lines[i].setData(self.data[i])
+                # Display heartbeat in terminal (every 10 updates for real-time feedback)
+                try:
+                    if hasattr(self, 'heartbeat_counter'):
+                        self.heartbeat_counter += 1
+                    else:
+                        self.heartbeat_counter = 0
+                        
+                    if self.heartbeat_counter % 10 == 0 and len(self.data) > 1:  # Lead II data available
+                        heart_rate = self.calculate_heart_rate(self.data[1])
+                        if heart_rate > 0:
+                            print(f"💓 HEARTBEAT: {heart_rate} BPM")
+                except Exception as e:
+                    print(f"❌ Error displaying heartbeat: {e}")
                     
-                    # Update Y-axis range based on actual data
-                    self.update_plot_y_range(i)
+        except Exception as e:
+            self.crash_logger.log_crash("Critical error in update_plots", e, "Real-time ECG plotting")
+            # Try to recover by resetting data
+            try:
+                if hasattr(self, 'data') and self.data:
+                    for i in range(len(self.data)):
+                        self.data[i] = np.zeros(self.buffer_size if hasattr(self, 'buffer_size') else 1000)
+            except Exception as recovery_error:
+                self.crash_logger.log_error("Failed to recover from update_plots error", recovery_error, "Data reset")
+    
+    def _manage_memory(self):
+        """Manage memory usage to prevent crashes from large data buffers"""
+        try:
+            import gc
+            import psutil
+            import os
             
-            # Calculate and update ECG metrics
-            self.calculate_ecg_metrics()
+            # Check current memory usage
+            process = psutil.Process(os.getpid())
+            memory_mb = process.memory_info().rss / 1024 / 1024
             
-            # Display heartbeat in terminal (every 10 updates for real-time feedback)
-            if hasattr(self, 'heartbeat_counter'):
-                self.heartbeat_counter += 1
-            else:
-                self.heartbeat_counter = 0
+            if memory_mb > 500:  # If using more than 500MB
+                print(f"⚠️ High memory usage: {memory_mb:.1f}MB - cleaning up...")
                 
-            if self.heartbeat_counter % 10 == 0 and len(self.data) > 1:  # Lead II data available
-                heart_rate = self.calculate_heart_rate(self.data[1])
-                if heart_rate > 0:
-                    print(f"💓 HEARTBEAT: {heart_rate} BPM")
+                # Force garbage collection
+                gc.collect()
+                
+                # Trim data buffers if they're too large
+                for i, data_buffer in enumerate(self.data):
+                    if len(data_buffer) > self.max_buffer_size:
+                        # Keep only the most recent data
+                        self.data[i] = data_buffer[-self.max_buffer_size:].copy()
+                        print(f"📉 Trimmed data buffer {i} to {len(self.data[i])} samples")
+                
+                # Check memory after cleanup
+                memory_after = process.memory_info().rss / 1024 / 1024
+                print(f"✅ Memory after cleanup: {memory_after:.1f}MB (freed {memory_mb - memory_after:.1f}MB)")
+                
+        except ImportError:
+            # psutil not available, skip memory management
+            pass
+        except Exception as e:
+            print(f"❌ Error in memory management: {e}")
+    
+    def _log_error(self, error_msg, exception=None, context=""):
+        """Comprehensive error logging for debugging crashes"""
+        try:
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            
+            # Basic error info
+            log_msg = f"[{timestamp}] ❌ {error_msg}"
+            if context:
+                log_msg += f" | Context: {context}"
+            
+            print(log_msg)
+            
+            # Detailed exception info
+            if exception:
+                print(f"Exception Type: {type(exception).__name__}")
+                print(f"Exception Message: {str(exception)}")
+                print("Full Traceback:")
+                traceback.print_exc()
+            
+            # System state info
+            try:
+                import psutil
+                import os
+                process = psutil.Process(os.getpid())
+                memory_mb = process.memory_info().rss / 1024 / 1024
+                cpu_percent = process.cpu_percent()
+                print(f"System State - Memory: {memory_mb:.1f}MB, CPU: {cpu_percent:.1f}%")
+            except ImportError:
+                pass
+            
+            # ECG state info
+            try:
+                if hasattr(self, 'data') and self.data:
+                    data_lengths = [len(d) for d in self.data]
+                    print(f"ECG Data State - Buffer lengths: {data_lengths}")
+                
+                if hasattr(self, 'serial_reader') and self.serial_reader:
+                    print(f"Serial Reader State - Running: {self.serial_reader.running}")
+                    print(f"Serial Reader State - Data count: {self.serial_reader.data_count}")
+            except Exception:
+                pass
+                
+        except Exception as log_error:
+            print(f"❌ Error in error logging: {log_error}")

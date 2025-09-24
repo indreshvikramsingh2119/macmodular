@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
     QMessageBox, QStackedWidget, QWidget, QInputDialog, QSizePolicy
 )
 from PyQt5.QtCore import Qt
+from utils.crash_logger import get_crash_logger
 from PyQt5.QtGui import QFont, QPixmap
 
 # Import core modules
@@ -217,7 +218,7 @@ class LoginRegisterDialog(QDialog):
         glass.setObjectName("Glass")
         glass.setStyleSheet("""
             QWidget#Glass {
-            
+
                 background: rgba(255,255,255,0.18);
                 border-radius: 24px;
                 border: 2px solid rgba(255,255,255,0.35);zx
@@ -579,11 +580,15 @@ def plot_ecg_with_peaks(ax, ecg_signal, sampling_rate=500, arrhythmia_result=Non
 def main():
     """Main application entry point with proper error handling"""
     try:
+        # Initialize crash logger first
+        crash_logger = get_crash_logger()
+        crash_logger.log_info("Application starting", "APP_START")
+        
         logger.info("Starting ECG Monitor Application")
         
         app = QApplication(sys.argv)
         app.setApplicationName("ECG Monitor")
-        app.setApplicationVersion("1.3")
+        app.setApplicationVersion("1.3")    
         
         # Show splash screen
         splash = SplashScreen()
@@ -624,6 +629,7 @@ def main():
                 
     except Exception as e:
         logger.critical(f"Fatal error in main application: {e}")
+        crash_logger.log_crash(f"Fatal application error: {str(e)}", e, "MAIN_APPLICATION")
         QMessageBox.critical(None, "Fatal Error", 
                            f"A fatal error occurred: {e}\nThe application will exit.")
         sys.exit(1)
