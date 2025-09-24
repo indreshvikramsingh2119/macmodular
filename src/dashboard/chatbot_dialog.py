@@ -91,8 +91,8 @@ class ChatbotDialog(QDialog):
                 color: #fff;
             }
         """)
-        # Use Gemini API key directly for testing
-        self.api_key = "AIzaSyACyIVYnAua6BsmdK2I7-cWefmiAxWFKzA"
+        # Load Gemini API key from environment (.env: CHATBOT_API_KEY)
+        self.api_key = os.getenv("CHATBOT_API_KEY", "")
         self.user_id = user_id or "default"
         self.dashboard_data_func = dashboard_data_func
         layout = QVBoxLayout(self)
@@ -141,7 +141,7 @@ class ChatbotDialog(QDialog):
         self.setLayout(layout)
         self.history_list.itemClicked.connect(self.show_history_item)
         if not self.api_key:
-            self.add_message("[Error: OpenAI API key not set. Please set the OPENAI_API_KEY environment variable.]", sender="AI")
+            self.add_message("[Error: Chatbot API key not set. Please set CHATBOT_API_KEY in your .env file.]", sender="AI")
             self.send_btn.setEnabled(False)
     def add_message(self, text, sender="user"):
         item = QListWidgetItem()
