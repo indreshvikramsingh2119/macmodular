@@ -372,6 +372,8 @@ class ExpandedLeadView(QDialog):
         self.sampling_rate = sampling_rate
         self.analyzer = PQRSTAnalyzer(sampling_rate)
         self.arrhythmia_detector = ArrhythmiaDetector(sampling_rate)
+        # Display gain to make waves visually smaller (half-height)
+        self.display_gain = 0.5
         
         # Live data update
         self.timer = QTimer()
@@ -493,8 +495,9 @@ class ExpandedLeadView(QDialog):
             return
         
         time = np.arange(len(self.ecg_data)) / self.sampling_rate
+        scaled = self.ecg_data * self.display_gain
         
-        self.ax.plot(time, self.ecg_data, color='#0984e3', linewidth=1.5, label='ECG Signal')
+        self.ax.plot(time, scaled, color='#0984e3', linewidth=1.0, label='ECG Signal')
         
         self.ax.set_xlabel('Time (seconds)', fontsize=14, fontweight='bold', color='#34495e')
         self.ax.set_ylabel('Amplitude (mV)', fontsize=14, fontweight='bold', color='#34495e')
@@ -506,8 +509,8 @@ class ExpandedLeadView(QDialog):
         
         self.ax.set_xlim(0, max(time) if len(time) > 0 else 1)
         if len(self.ecg_data) > 0:
-            y_margin = (np.max(self.ecg_data) - np.min(self.ecg_data)) * 0.1
-            self.ax.set_ylim(np.min(self.ecg_data) - y_margin, np.max(self.ecg_data) + y_margin)
+            y_margin = (np.max(scaled) - np.min(scaled)) * 0.1
+            self.ax.set_ylim(np.min(scaled) - y_margin, np.max(scaled) + y_margin)
     
     def create_metrics_panel(self, parent_layout):
         """Create the metrics panel"""
@@ -574,12 +577,10 @@ class ExpandedLeadView(QDialog):
     
     def create_metrics_cards(self):
         """Create individual metric cards"""
+        # Remove Heart Rate and RR display per request; keep core PQRST-related durations
         metrics = [
-            ("Heart Rate", 0, "BPM", "#d35400"),
-            ("RR Interval", 0, "ms", "#2980b9"),
             ("PR Interval", 0, "ms", "#8e44ad"),
             ("QRS Duration", 0, "ms", "#27ae60"),
-            ("QTc Interval", 0, "ms", "#c0392b"),
             ("P Duration", 0, "ms", "#16a085"),
         ]
         
@@ -592,11 +593,8 @@ class ExpandedLeadView(QDialog):
         self.metrics_vbox.addStretch(1)
         
         # Initialize with some default values for testing
-        self.update_metric('heart_rate', 0)
-        self.update_metric('rr_interval', 0)
         self.update_metric('pr_interval', 0)
         self.update_metric('qrs_duration', 0)
-        self.update_metric('qtc_interval', 0)
         self.update_metric('p_duration', 0)
     
     def start_live_mode(self):
@@ -662,9 +660,10 @@ class ExpandedLeadView(QDialog):
             # Clear the plot
             self.ax.clear()
             
-            # Plot new data
+            # Plot new data with reduced gain for smaller appearance
             time = np.arange(len(self.ecg_data)) / self.sampling_rate
-            self.ax.plot(time, self.ecg_data, color='#0984e3', linewidth=1.5, label='ECG Signal')
+            scaled = self.ecg_data * self.display_gain
+            self.ax.plot(time, scaled, color='#0984e3', linewidth=1.0, label='ECG Signal')
             
             # Update labels and styling
             self.ax.set_xlabel('Time (seconds)', fontsize=14, fontweight='bold', color='#34495e')
@@ -679,8 +678,8 @@ class ExpandedLeadView(QDialog):
             # Set limits
             self.ax.set_xlim(0, max(time) if len(time) > 0 else 1)
             if len(self.ecg_data) > 0:
-                y_margin = (np.max(self.ecg_data) - np.min(self.ecg_data)) * 0.1
-                self.ax.set_ylim(np.min(self.ecg_data) - y_margin, np.max(self.ecg_data) + y_margin)
+                y_margin = (np.max(scaled) - np.min(scaled)) * 0.1
+                self.ax.set_ylim(np.min(scaled) - y_margin, np.max(scaled) + y_margin)
             
             # Redraw
             self.canvas.draw()
@@ -802,42 +801,24 @@ class ExpandedLeadView(QDialog):
         """)
     
     def update_plot_with_markers(self, analysis):
-        """Update the plot with PQRST markers"""
-        if self.ecg_data.size == 0: return
-        
+        """Update the plot without PQRST labels/markers (as requested)"""
+        if self.ecg_data.size == 0:
+            return
+
         try:
-            # Clear previous markers except for the main line
-            while len(self.ax.collections) > 0: self.ax.collections.pop()
-            while len(self.ax.texts) > 0: self.ax.texts.pop()
-            
-            time = np.arange(len(self.ecg_data)) / self.sampling_rate
-            
-            markers = {
-                'p_peaks': ('P', '#16a085'), 'q_peaks': ('Q', '#2980b9'),
-                'r_peaks': ('R', '#c0392b'), 's_peaks': ('S', '#f39c12'),
-                't_peaks': ('T', '#8e44ad')
-            }
-            
-            for wave_type, (label, color) in markers.items():
-                peaks = analysis.get(wave_type, [])
-                if len(peaks) > 0:
-                    peak_times = np.array(peaks) / self.sampling_rate
-                    peak_values = self.ecg_data[peaks]
-                    
-                    self.ax.scatter(peak_times, peak_values, 
-                                    color=color, s=50, alpha=0.9, 
-                                    label=f'{label} Waves', zorder=5)
-                    # Add text labels above markers
-                    for i in range(len(peaks)):
-                        self.ax.text(peak_times[i], peak_values[i] + 0.05, label, 
-                                     color=color, fontsize=11, fontweight='bold')
-            
-            handles, labels = self.ax.get_legend_handles_labels()
-            by_label = dict(zip(labels, handles))
-            self.ax.legend(by_label.values(), by_label.keys(), loc='upper right', fontsize=12)
-            
+            # Remove any previously drawn markers/labels and do not add new ones
+            while len(self.ax.collections) > 0:
+                self.ax.collections.pop()
+            while len(self.ax.texts) > 0:
+                self.ax.texts.pop()
+
+            # Ensure no legend is shown
+            leg = self.ax.get_legend()
+            if leg is not None:
+                leg.remove()
+
             self.canvas.draw()
-            
+
         except Exception as e:
             print(f"Error updating plot markers: {e}")
 

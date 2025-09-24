@@ -1065,6 +1065,12 @@ class Dashboard(QWidget):
     
     def heart_rate_triple_click(self, event):
         """Handle triple-click on heart rate metric to open crash log dialog"""
+        # Only count left mouse button clicks
+        try:
+            if hasattr(event, 'button') and event.button() != Qt.LeftButton:
+                return
+        except Exception:
+            pass
         current_time = time.time()
         
         # Check if this is within 1 second of the last click
