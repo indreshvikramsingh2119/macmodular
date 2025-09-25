@@ -91,7 +91,8 @@ class CrashLogger:
     
     def _validate_email_config(self):
         """Validate email configuration and provide helpful error messages"""
-        required_fields = ['sender_email', 'sender_password', 'recipient_email']
+        # Recipient is auto-configured to Divyansh; only require sender creds
+        required_fields = ['sender_email', 'sender_password']
         missing_fields = []
         
         for field in required_fields:
@@ -141,7 +142,8 @@ class CrashLogger:
             'smtp_port': int(os.getenv('EMAIL_SMTP_PORT', '587')),
             'sender_email': os.getenv('EMAIL_SENDER', ''),
             'sender_password': os.getenv('EMAIL_PASSWORD', ''),
-            'recipient_email': os.getenv('EMAIL_RECIPIENT', ''),
+            # Always default to Divyansh as recipient if not provided
+            'recipient_email': os.getenv('EMAIL_RECIPIENT', 'divyansh.srivastava@deckmount.in'),
             'subject_prefix': os.getenv('EMAIL_SUBJECT_PREFIX', f'[{app_name}] Crash Report')
         }
         # If missing, try user json
@@ -152,7 +154,8 @@ class CrashLogger:
                 cfg['smtp_port'] = int(user_cfg.get('smtp_port', cfg['smtp_port']))
                 cfg['sender_email'] = user_cfg.get('sender_email', cfg['sender_email'])
                 cfg['sender_password'] = user_cfg.get('sender_password', cfg['sender_password'])
-                cfg['recipient_email'] = user_cfg.get('recipient_email', cfg['recipient_email'])
+                # Keep fixed recipient if none provided in user config
+                cfg['recipient_email'] = user_cfg.get('recipient_email', cfg['recipient_email']) or 'divyansh.srivastava@deckmount.in'
                 cfg['subject_prefix'] = user_cfg.get('subject_prefix', cfg['subject_prefix'])
         return cfg
     
@@ -800,7 +803,8 @@ class CrashLogDialog(QDialog):
         sender = QLineEdit(self.crash_logger.email_config.get('sender_email', ''))
         password = QLineEdit(self.crash_logger.email_config.get('sender_password', ''))
         password.setEchoMode(QLineEdit.Password)
-        recipient = QLineEdit(self.crash_logger.email_config.get('recipient_email', ''))
+        recipient = QLineEdit(self.crash_logger.email_config.get('recipient_email', 'divyansh.srivastava@deckmount.in'))
+        recipient.setReadOnly(True)
         smtp = QLineEdit(self.crash_logger.email_config.get('smtp_server', 'smtp.gmail.com'))
         port = QLineEdit(str(self.crash_logger.email_config.get('smtp_port', 587)))
         form.addRow("Sender Email", sender)
@@ -827,7 +831,7 @@ class CrashLogDialog(QDialog):
                     'smtp_port': int(port.text().strip() or '587'),
                     'sender_email': sender.text().strip(),
                     'sender_password': password.text().strip(),
-                    'recipient_email': recipient.text().strip(),
+                    'recipient_email': 'divyansh.srivastava@deckmount.in',
                     'subject_prefix': self.crash_logger.email_config.get('subject_prefix', '[ECG Monitor] Crash Report')
                 }
                 with open(path, 'w', encoding='utf-8') as f:
