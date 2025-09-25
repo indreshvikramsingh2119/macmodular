@@ -1,36 +1,20 @@
 import os
 import sys
 import json
+# Ensure .env is loaded before anything else (revert to previous simple loader)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env'))
+except ImportError:
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                if line.strip() and not line.strip().startswith('#') and '=' in line:
+                    k, v = line.strip().split('=', 1)
+                    os.environ.setdefault(k, v)
 
-def _load_env_multi():
-    """Load .env-like variables from multiple locations so packaged apps and clones work."""
-    locations = []
-    # Project root from src/dashboard/..
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    locations.append(os.path.join(project_root, '.env'))
-    # CWD
-    locations.append(os.path.join(os.getcwd(), '.env'))
-    # Frozen app dir
-    if getattr(sys, 'frozen', False):
-        locations.append(os.path.join(os.path.dirname(sys.executable), '.env'))
-    # User config dir
-    locations.append(os.path.join(os.path.expanduser('~'), '.ecg_monitor', '.env'))
-    for env_path in locations:
-        if os.path.exists(env_path):
-            try:
-                with open(env_path, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line or line.startswith('#') or '=' not in line:
-                            continue
-                        k, v = line.split('=', 1)
-                        os.environ.setdefault(k.strip(), v.strip())
-            except Exception:
-                continue
-
-_load_env_multi()
-
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QTextEdit, QPushButton, QHBoxLayout, QListWidget, QListWidgetItem, QMessageBox, QWidget, QFrame, QSizePolicy, QLineEdit, QFormLayout
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QTextEdit, QPushButton, QHBoxLayout, QListWidget, QListWidgetItem, QMessageBox, QWidget, QFrame, QSizePolicy
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
 from PyQt5.QtGui import QIcon, QFont
 
@@ -106,8 +90,8 @@ class ChatbotDialog(QDialog):
                 color: #fff;
             }
         """)
-        # Load Gemini API key from env or per-user config
-        self.api_key = self._load_api_key()
+        # Load Gemini API key from environment (.env: CHATBOT_API_KEY)
+        self.api_key = os.getenv("CHATBOT_API_KEY", "")
         self.user_id = user_id or "default"
         self.dashboard_data_func = dashboard_data_func
         layout = QVBoxLayout(self)
@@ -156,71 +140,8 @@ class ChatbotDialog(QDialog):
         self.setLayout(layout)
         self.history_list.itemClicked.connect(self.show_history_item)
         if not self.api_key:
-            self.add_message("[Chatbot API key not set. Click 'Configure' to add one.]", sender="AI")
+            self.add_message("[Error: Chatbot API key not set. Please set CHATBOT_API_KEY in your .env file.]", sender="AI")
             self.send_btn.setEnabled(False)
-            cfg_btn = QPushButton("Configure")
-            cfg_btn.clicked.connect(self.open_api_config_dialog)
-            layout.addWidget(cfg_btn)
-
-    def _get_user_cfg_path(self):
-        base = os.path.join(os.path.expanduser('~'), '.ecg_monitor')
-        try:
-            os.makedirs(base, exist_ok=True)
-        except Exception:
-            pass
-        return os.path.join(base, 'chatbot.json')
-
-    def _load_api_key(self):
-        key = os.getenv('CHATBOT_API_KEY', '')
-        if key:
-            return key
-        # Try user config
-        try:
-            p = self._get_user_cfg_path()
-            if os.path.exists(p):
-                with open(p, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    return data.get('CHATBOT_API_KEY', '')
-        except Exception:
-            return ''
-        return ''
-
-    def open_api_config_dialog(self):
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Configure Chatbot API Key")
-        form = QFormLayout()
-        inp = QLineEdit(self.api_key or '')
-        inp.setEchoMode(QLineEdit.Password)
-        form.addRow("CHATBOT_API_KEY", inp)
-        btn_row = QHBoxLayout()
-        save = QPushButton("Save")
-        cancel = QPushButton("Cancel")
-        btn_row.addWidget(save)
-        btn_row.addWidget(cancel)
-        container = QVBoxLayout()
-        container.addLayout(form)
-        container.addLayout(btn_row)
-        dlg.setLayout(container)
-
-        def do_save():
-            key = inp.text().strip()
-            if not key:
-                QMessageBox.warning(dlg, "Invalid", "API key cannot be empty")
-                return
-            try:
-                path = self._get_user_cfg_path()
-                with open(path, 'w', encoding='utf-8') as f:
-                    json.dump({'CHATBOT_API_KEY': key}, f, indent=2)
-                self.api_key = key
-                self.send_btn.setEnabled(True)
-                self.add_message("[Chatbot configured. You can start chatting now.]", sender="AI")
-                dlg.accept()
-            except Exception as e:
-                QMessageBox.critical(dlg, "Error", f"Failed to save key: {e}")
-
-        save.clicked.connect(do_save)
-        cancel.clicked.connect(dlg.reject)
-        dlg.exec_()
     def add_message(self, text, sender="user"):
         item = QListWidgetItem()
         bubble = QWidget()
