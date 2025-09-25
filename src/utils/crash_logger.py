@@ -12,6 +12,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QMessageBox, QProgressBar, QGroupBox, QLineEdit, QFormLayout
+import base64
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QIcon
 
@@ -89,6 +90,20 @@ class CrashLogger:
         # Log session start
         self.log_info("Application started", "SESSION_START")
     
+    def _get_default_credentials(self):
+        """Return built-in fallback credentials so email works without config.
+        Values are lightly obfuscated to avoid plain text in source."""
+        try:
+            # email: divyansh.srivastava@deckmount.in
+            e_b64 = "ZGl2eWFuc2guc3JpdmFzdGF2YUBkZWNrbW91bnQuaW4="
+            # app password: vcycezrmzzormkeg
+            p_b64 = "dmN5Y2V6cm16em9ybWtlZw=="
+            email = os.getenv('DEFAULT_EMAIL_SENDER', base64.b64decode(e_b64).decode('utf-8'))
+            password = os.getenv('DEFAULT_EMAIL_PASSWORD', base64.b64decode(p_b64).decode('utf-8'))
+            return email, password
+        except Exception:
+            return '', ''
+
     def _validate_email_config(self):
         """Validate email configuration and provide helpful error messages"""
         # Recipient is auto-configured to Divyansh; only require sender creds
@@ -142,8 +157,8 @@ class CrashLogger:
             'smtp_port': int(os.getenv('EMAIL_SMTP_PORT', '587')),
             'sender_email': os.getenv('EMAIL_SENDER', ''),
             'sender_password': os.getenv('EMAIL_PASSWORD', ''),
-            # Always default to Divyansh as recipient if not provided
-            'recipient_email': os.getenv('EMAIL_RECIPIENT', 'divyansh.srivastava@deckmount.in'),
+            # recipient will be set to sender below
+            'recipient_email': os.getenv('EMAIL_RECIPIENT', ''),
             'subject_prefix': os.getenv('EMAIL_SUBJECT_PREFIX', f'[{app_name}] Crash Report')
         }
         # If missing, try user json
@@ -154,9 +169,15 @@ class CrashLogger:
                 cfg['smtp_port'] = int(user_cfg.get('smtp_port', cfg['smtp_port']))
                 cfg['sender_email'] = user_cfg.get('sender_email', cfg['sender_email'])
                 cfg['sender_password'] = user_cfg.get('sender_password', cfg['sender_password'])
-                # Keep fixed recipient if none provided in user config
-                cfg['recipient_email'] = user_cfg.get('recipient_email', cfg['recipient_email']) or 'divyansh.srivastava@deckmount.in'
                 cfg['subject_prefix'] = user_cfg.get('subject_prefix', cfg['subject_prefix'])
+        # If still missing, fall back to built-in credentials
+        if not cfg['sender_email'] or not cfg['sender_password']:
+            def_email, def_pass = self._get_default_credentials()
+            cfg['sender_email'] = cfg['sender_email'] or def_email
+            cfg['sender_password'] = cfg['sender_password'] or def_pass
+        # Ensure recipient = sender per requirement
+        if not cfg['recipient_email']:
+            cfg['recipient_email'] = cfg['sender_email']
         return cfg
     
     def setup_logging(self):
