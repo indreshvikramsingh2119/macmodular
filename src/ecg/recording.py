@@ -1282,11 +1282,6 @@ class ECGMenu(QGroupBox):
         # Define sections for printer setup
         sections = [
             {
-                'title': 'Auto Format',
-                'options': [("3x4", "3x4"), ("6x2", "6x2"), ("12x1", "12x1")],
-                'variable': {"value": "3x4"}
-            },
-            {
                 'title': 'Analysis Result',
                 'options': [("On", "on"), ("Off", "off")],
                 'variable': {"value": "on"}
@@ -1490,7 +1485,7 @@ class ECGMenu(QGroupBox):
         # Define buttons
         buttons = [
             {
-                'text': 'Load Selected',
+                'text': 'Select',
                 'action': self.load_default_settings,
                 'style': 'primary'
             },
@@ -1658,7 +1653,7 @@ class ECGMenu(QGroupBox):
         # Define buttons
         buttons = [
             {
-                'text': 'Execute Selected',
+                'text': 'Select',
                 'action': self.execute_factory_maintenance,
                 'style': 'primary'
             },

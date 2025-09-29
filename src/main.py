@@ -322,7 +322,7 @@ class LoginRegisterDialog(QDialog):
         widget = QWidget()
         layout = QVBoxLayout()
         self.login_email = QLineEdit()
-        self.login_email.setPlaceholderText("Username or Phone")
+        self.login_email.setPlaceholderText("Full Name or Phone Number")
         self.login_password = QLineEdit()
         self.login_password.setPlaceholderText("Password (or Machine Serial ID)")
         self.login_password.setEchoMode(QLineEdit.Password)
