@@ -200,8 +200,14 @@ class DemoManager:
                     self.ecg_test_page.data[lead_index][:count] = arr - baseline_mean
             
             # Set warmup window to avoid initial visual artifacts
-            self._warmup_until = time.time() + 3.0
+            self._warmup_until = time.time() + 5.0
             self._demo_started_at = time.time()
+
+            # Make an immediate plot update once after prefill for stable first frame
+            try:
+                self.update_demo_plots()
+            except Exception as _e:
+                pass
 
             # Start reading data row by row from CSV with wave speed control
             def read_csv_data():
@@ -379,8 +385,10 @@ class DemoManager:
         now_ts = time.time()
         if now_ts < self._warmup_until:
             warmup_left = max(0.0, self._warmup_until - now_ts)
-            warmup_total = 3.0
-            ramp = max(0.2, 1.0 - (warmup_left / warmup_total) * 0.8)  # from 0.2 -> 1.0
+            warmup_total = max(1e-6, self._warmup_until - (self._demo_started_at or now_ts))
+            # Ramp from 0.1 to 1.0 linearly across warmup
+            progress = 1.0 - (warmup_left / warmup_total)
+            ramp = max(0.1, min(1.0, 0.1 + 0.9 * progress))
             effective_gain = current_gain * ramp
         else:
             effective_gain = current_gain
