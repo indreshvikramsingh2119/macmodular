@@ -401,218 +401,6 @@ class ECGMenu(QGroupBox):
             btn = QPushButton(text)
             btn.setFixedHeight(36)
             btn.clicked.connect(handler)
-
-            if text == "Save ECG":
-                btn.setStyleSheet("""
-                    QPushButton {
-                        font: bold 12pt Arial;
-                        color: white;
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #28a745, stop:1 #20c997);
-                        border: none;
-                        border-radius: 12px;
-                        padding: 8px 16px;
-                        margin: 2px;
-                    }
-                    QPushButton:hover {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #20c997, stop:1 #28a745);
-                        box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
-                        transform: translateY(-2px);
-                    }
-                    QPushButton:pressed {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1e7e34, stop:1 #1c7430);
-                        transform: translateY(0px);
-                    }
-                """)
-            elif text == "Open ECG":
-                btn.setStyleSheet("""
-                    QPushButton {
-                        font: bold 12pt Arial;
-                        color: white;
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #17a2b8, stop:1 #138496);
-                        border: none;
-                        border-radius: 12px;
-                        padding: 8px 16px;
-                        margin: 2px;
-                    }
-                    QPushButton:hover {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #138496, stop:1 #17a2b8);
-                        box-shadow: 0 4px 15px rgba(23, 162, 184, 0.3);
-                        transform: translateY(-2px);
-                    }
-                    QPushButton:pressed {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0c5460, stop:1 #138496);
-                        transform: translateY(0px);
-                    }
-                """)
-            elif text == "Working Mode":
-                btn.setStyleSheet("""
-                    QPushButton {
-                        font: bold 12pt Arial;
-                        color: white;
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #6f42c1, stop:1 #5a32a3);
-                        border: none;
-                        border-radius: 12px;
-                        padding: 8px 16px;
-                        margin: 2px;
-                    }
-                    QPushButton:hover {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #5a32a3, stop:1 #6f42c1);
-                        box-shadow: 0 4px 15px rgba(111, 66, 193, 0.3);
-                        transform: translateY(-2px);
-                    }
-                    QPushButton:pressed {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4c2a85, stop:1 #5a32a3);
-                        transform: translateY(0px);
-                    }
-                """)
-            elif text == "Printer Setup":
-                btn.setStyleSheet("""
-                    QPushButton {
-                        font: bold 12pt Arial;
-                        color: white;
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fd7e14, stop:1 #e8650e);
-                        border: none;
-                        border-radius: 12px;
-                        padding: 8px 16px;
-                        margin: 2px;
-                    }
-                    QPushButton:hover {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #e8650e, stop:1 #fd7e14);
-                        box-shadow: 0 4px 15px rgba(253, 126, 20, 0.3);
-                        transform: translateY(-2px);
-                    }
-                    QPushButton:pressed {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #d35400, stop:1 #e8650e);
-                        transform: translateY(0px);
-                    }
-                """)
-            elif text == "Set Filter":
-                btn.setStyleSheet("""
-                    QPushButton {
-                        font: bold 12pt Arial;
-                        color: white;
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #20c997, stop:1 #17a2b8);
-                        border: none;
-                        border-radius: 12px;
-                        padding: 8px 16px;
-                        margin: 2px;
-                    }
-                    QPushButton:hover {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #17a2b8, stop:1 #20c997);
-                        box-shadow: 0 4px 15px rgba(32, 201, 151, 0.3);
-                        transform: translateY(-2px);
-                    }
-                    QPushButton:pressed {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #138496, stop:1 #17a2b8);
-                        transform: translateY(0px);
-                    }
-                """)
-            elif text == "System Setup":
-                btn.setStyleSheet("""
-                    QPushButton {
-                        font: bold 12pt Arial;
-                        color: white;
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #6c757d, stop:1 #495057);
-                        border: none;
-                        border-radius: 12px;
-                        padding: 8px 16px;
-                        margin: 2px;
-                    }
-                    QPushButton:hover {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #495057, stop:1 #6c757d);
-                        box-shadow: 0 4px 15px rgba(108, 117, 125, 0.3);
-                        transform: translateY(-2px);
-                    }
-                    QPushButton:pressed {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #343a40, stop:1 #495057);
-                        transform: translateY(0px);
-                    }
-                """)
-            elif text == "Load Default":
-                btn.setStyleSheet("""
-                    QPushButton {
-                        font: bold 12pt Arial;
-                        color: white;
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffc107, stop:1 #e0a800);
-                        border: none;
-                        border-radius: 12px;
-                        padding: 8px 16px;
-                        margin: 2px;
-                    }
-                    QPushButton:hover {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #e0a800, stop:1 #ffc107);
-                        box-shadow: 0 4px 15px rgba(255, 193, 7, 0.3);
-                        transform: translateY(-2px);
-                    }
-                    QPushButton:pressed {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #d39e00, stop:1 #e0a800);
-                        transform: translateY(0px);
-                    }
-                """)
-            elif text == "Version":
-                btn.setStyleSheet("""
-                    QPushButton {
-                        font: bold 12pt Arial;
-                        color: white;
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #6610f2, stop:1 #520dc2);
-                        border: none;
-                        border-radius: 12px;
-                        padding: 8px 16px;
-                        margin: 2px;
-                    }
-                    QPushButton:hover {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #520dc2, stop:1 #6610f2);
-                        box-shadow: 0 4px 15px rgba(102, 16, 242, 0.3);
-                        transform: translateY(-2px);
-                    }
-                    QPushButton:pressed {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3d0a91, stop:1 #520dc2);
-                        transform: translateY(0px);
-                    }
-                """)
-            elif text == "Factory Maintain":
-                btn.setStyleSheet("""
-                    QPushButton {
-                        font: bold 12pt Arial;
-                        color: white;
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #dc3545, stop:1 #c82333);
-                        border: none;
-                        border-radius: 12px;
-                        padding: 8px 16px;
-                        margin: 2px;
-                    }
-                    QPushButton:hover {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #c82333, stop:1 #dc3545);
-                        box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3);
-                        transform: translateY(-2px);
-                    }
-                    QPushButton:pressed {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #bd2130, stop:1 #c82333);
-                        transform: translateY(0px);
-                    }
-                """)
-            elif text == "Exit":
-                btn.setStyleSheet("""
-                    QPushButton {
-                        font: bold 12pt Arial;
-                        color: white;
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #6c757d, stop:1 #495057);
-                        border: none;
-                        border-radius: 12px;
-                        padding: 8px 16px;
-                        margin: 2px;
-                    }
-                    QPushButton:hover {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #495057, stop:1 #6c757d);
-                        box-shadow: 0 4px 15px rgba(108, 117, 125, 0.3);
-                        transform: translateY(-2px);
-                    }
-                    QPushButton:pressed {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #343a40, stop:1 #495057);
-                        transform: translateY(0px);
-                    }
-                """)
-
             layout.addWidget(btn)
             self.buttons[text] = btn
         layout.addStretch(1)
@@ -658,6 +446,18 @@ class ECGMenu(QGroupBox):
             
             # Replace the resize event handler
             parent.resizeEvent = enhanced_resize_event
+
+    def create_resize_handler(self, original_resize_event):
+        def resize_handler(event):
+            # Call original resize event
+            if original_resize_event:
+                original_resize_event(event)
+            
+            # Update sliding panel if it exists
+            if self.sliding_panel and hasattr(self.sliding_panel, 'update_responsive_sizing'):
+                self.sliding_panel.update_responsive_sizing()
+                
+        return resize_handler
 
     def setup_global_resize_monitoring(self):
         app = QApplication.instance()
@@ -868,17 +668,10 @@ class ECGMenu(QGroupBox):
                 color: white;
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                     stop:0 #ff6600, stop:1 #ff8c42);
-                border: none;
+                border: 2px solid #343434;
                 border-radius: 15px;
                 padding: {max(15, margin_size-10)}px;
                 margin: {max(5, margin_size-15)}px;
-                box-shadow: 0 6px 20px rgba(255, 102, 0, 0.3);
-            }}
-            QLabel:hover {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                    stop:0 #ff8c42, stop:1 #ffaa00);
-                box-shadow: 0 6px 20px rgba(255, 102, 0, 0.4);
-                transform: translateY(-2px);
             }}
         """)
         title.setAlignment(Qt.AlignCenter)
@@ -890,7 +683,7 @@ class ECGMenu(QGroupBox):
             QFrame {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
                     stop:0 #ffffff, stop:1 #f8f9fa);
-                border: 1px solid #e0e0e0;
+                border: 2px solid #e0e0e0;
                 border-radius: 15px;
                 padding: 20px;
                 margin: 10px;
@@ -905,7 +698,7 @@ class ECGMenu(QGroupBox):
         except Exception:
             pass
         
-        labels = ["Org.", "Doctor", "Patient Name"]
+        labels = ["Organisation", "Doctor", "Patient Name"]
         entries = {}
 
         # Responsive form fields
@@ -939,7 +732,7 @@ class ECGMenu(QGroupBox):
                     color: #2c3e50;
                 }}
                 QLineEdit:focus {{
-                    border: 2px solid #ff6600;
+                    border: 2px solid #343434;
                     background: #fff8f0;
                 }}
                 QLineEdit:hover {{
@@ -987,7 +780,7 @@ class ECGMenu(QGroupBox):
                 color: #2c3e50;
             }}
             QLineEdit:focus {{
-                border: 2px solid #ff6600;
+                border: 2px solid #343434;
                 background: #fff8f0;
             }}
             QLineEdit:hover {{
@@ -1031,7 +824,7 @@ class ECGMenu(QGroupBox):
                 color: #2c3e50;
             }}
             QComboBox:focus {{
-                border: 2px solid #ff6600;
+                border: 2px solid #343434;
                 background: #fff8f0;
             }}
             QComboBox:hover {{
@@ -1092,7 +885,7 @@ class ECGMenu(QGroupBox):
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                     stop:0 #28a745, stop:1 #20c997);
                 color: white;
-                border: none;
+                border: 2px solid #28a745;
                 border-radius: 10px;
                 padding: {max(10, int(margin_size * 0.4))}px;
                 font: bold {max(12, int(margin_size * 0.4))}pt Arial;
@@ -1101,13 +894,12 @@ class ECGMenu(QGroupBox):
             QPushButton:hover {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                     stop:0 #20c997, stop:1 #28a745);
-                box-shadow: 0 6px 20px rgba(40, 167, 69, 0.4);
-                transform: translateY(-3px);
+                border: 2px solid #20c997;
             }}
             QPushButton:pressed {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                     stop:0 #1e7e34, stop:1 #1c7430);
-                transform: translateY(0px);
+                border: 2px solid #1e7e34;
             }}
         """)
         submit_btn.clicked.connect(lambda: self.submit_ecg_details(entries, gender_menu))
@@ -1117,7 +909,7 @@ class ECGMenu(QGroupBox):
         return widget
 
     def submit_ecg_details(self, entries, gender_menu):
-        values = {label: entries[label].text().strip() for label in ["Org.", "Doctor", "Patient Name", "Age"]}
+        values = {label: entries[label].text().strip() for label in ["Organisation", "Doctor", "Patient Name", "Age"]}
         values["Gender"] = gender_menu.currentText()
 
         if any(v == "" for v in values.values()) or values["Gender"] == "Select":
@@ -1145,7 +937,7 @@ class ECGMenu(QGroupBox):
 
         try:
             with open("ecg_data.txt", "a") as file:
-                file.write(f"{values['Org.']}, {values['Doctor']}, {values['Patient Name']}, {values['Age']}, {values['Gender']}\n")
+                file.write(f"{values['Organisation']}, {values['Doctor']}, {values['Patient Name']}, {values['Age']}, {values['Gender']}\n")
             QMessageBox.information(self.parent(), "Saved", "ECG details saved successfully!")
             self.hide_sliding_panel()
         except Exception as e:
@@ -1179,18 +971,11 @@ class ECGMenu(QGroupBox):
                 color: white;
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                     stop:0 #ff6600, stop:1 #ff8c42);
-                border: none;
+                border: 2px solid #ff6600;
                 border-radius: 12px;
                 padding: {max(12, int(margin_size * 0.6))}px;
                 margin: {max(8, int(margin_size * 0.4))}px;
                 min-height: {max(30, int(margin_size * 1.5))}px;
-                box-shadow: 0 6px 20px rgba(255, 102, 0, 0.3);
-            }}
-            QLabel:hover {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                    stop:0 #ff8c42, stop:1 #ffaa00);
-                box-shadow: 0 6px 20px rgba(255, 102, 0, 0.4);
-                transform: translateY(-2px);
             }}
         """)
         title.setAlignment(Qt.AlignCenter)
@@ -1201,7 +986,7 @@ class ECGMenu(QGroupBox):
         file_frame.setStyleSheet("""
             QFrame {
                 background: white;
-                border: 1px solid #e0e0e0;
+                border: 2px solid #e0e0e0;
                 border-radius: 10px;
                 padding: 20px;
                 margin: 10px;
@@ -1295,15 +1080,14 @@ class ECGMenu(QGroupBox):
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                     stop:0 #17a2b8, stop:0.5 #138496, stop:1 #17a2b8);
                 color: white;
-                border: none;
+                border: 2px solid #17a2b8;
                 border-radius: 8px;
                 padding: 8px;
             }}
             QPushButton:hover {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                     stop:0 #138496, stop:0.5 #17a2b8, stop:1 #138496);
-                box-shadow: 0 6px 20px rgba(23, 162, 184, 0.4);
-                transform: translateY(-3px);
+                border: 2px solid #138496;
             }}
         """)
         browse_btn.clicked.connect(self.browse_ecg_file)
@@ -1318,15 +1102,14 @@ class ECGMenu(QGroupBox):
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                     stop:0 #4CAF50, stop:0.5 #45a049, stop:1 #4CAF50);
                 color: white;
-                border: none;
+                border: 2px solid #4CAF50;
                 border-radius: 8px;
                 padding: 8px;
             }}
             QPushButton:hover {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                     stop:0 #45a049, stop:0.5 #4CAF50, stop:1 #45a049);
-                box-shadow: 0 6px 20px rgba(76, 175, 80, 0.4);
-                transform: translateY(-3px);
+                border: 2px solid #45a049;
             }}
         """)
         open_btn.clicked.connect(self.open_ecg_file)
@@ -1341,15 +1124,14 @@ class ECGMenu(QGroupBox):
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                     stop:0 #f44336, stop:0.5 #d32f2f, stop:1 #f44336);
                 color: white;
-                border: none;
+                border: 2px solid #f44336;
                 border-radius: 8px;
                 padding: 8px;
             }}
             QPushButton:hover {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                     stop:0 #d32f2f, stop:0.5 #f44336, stop:1 #d32f2f);
-                box-shadow: 0 6px 20px rgba(244, 67, 54, 0.4);
-                transform: translateY(-3px);
+                border: 2px solid #d32f2f;
             }}
         """)
         cancel_btn.clicked.connect(self.hide_sliding_panel)
@@ -1427,6 +1209,11 @@ class ECGMenu(QGroupBox):
                 'title': 'Sampling Mode',
                 'options': [("Simultaneous", "Simultaneous"), ("Sequence", "Sequence")],
                 'setting_key': 'sampling_mode'
+            },
+            {
+                'title': 'Demo Function',
+                'options': [("Off", "Off"), ("On", "On")],
+                'setting_key': 'demo_function'
             },
             {
                 'title': 'Priority Storage',
@@ -1743,18 +1530,11 @@ class ECGMenu(QGroupBox):
                 color: white;
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                     stop:0 #ff6600, stop:1 #ff8c42);
-                border: none;
+                border: 2px solid #ff6600;
                 border-radius: 12px;
                 padding: {max(12, int(margin_size * 0.6))}px;
                 margin: {max(8, int(margin_size * 0.4))}px;
                 min-height: {max(30, int(margin_size * 1.5))}px;
-                box-shadow: 0 6px 20px rgba(255, 102, 0, 0.3);
-            }}
-            QLabel:hover {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                    stop:0 #ff8c42, stop:1 #ffaa00);
-                box-shadow: 0 6px 20px rgba(255, 102, 0, 0.4);
-                transform: translateY(-2px);
             }}
         """)
         title.setAlignment(Qt.AlignCenter)
@@ -1765,7 +1545,7 @@ class ECGMenu(QGroupBox):
         info_frame.setStyleSheet("""
             QFrame {
                 background: white;
-                border: 1px solid #e0e0e0;
+                border: 2px solid #e0e0e0;
                 border-radius: 10px;
                 padding: 20px;
                 margin: 10px;
@@ -1791,8 +1571,6 @@ class ECGMenu(QGroupBox):
             
             # Label
             lbl = QLabel(label)
-            lbl.setWordWrap(True)
-            lbl.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
             lbl.setStyleSheet(f"""
                 QLabel {{
                     font: bold {max(11, int(margin_size * 0.55))}pt Arial;
@@ -1807,8 +1585,6 @@ class ECGMenu(QGroupBox):
             
             # Value
             val = QLabel(value)
-            val.setWordWrap(True)
-            val.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
             val.setStyleSheet(f"""
                 QLabel {{
                     font: {max(10, int(margin_size * 0.5))}pt Arial;
@@ -1836,7 +1612,7 @@ class ECGMenu(QGroupBox):
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                     stop:0 #6c757d, stop:0.5 #495057, stop:1 #6c757d);
                 color: white;
-                border: none;
+                border: 2px solid #6c757d;
                 border-radius: 8px;
                 padding: {max(10, int(margin_size * 0.5))}px;
                 min-height: {max(35, int(margin_size * 1.8))}px;
@@ -1844,8 +1620,7 @@ class ECGMenu(QGroupBox):
             QPushButton:hover {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                     stop:0 #495057, stop:0.5 #6c757d, stop:1 #495057);
-                box-shadow: 0 6px 20px rgba(108, 117, 125, 0.4);
-                transform: translateY(-3px);
+                border: 2px solid #495057;
             }}
         """)
         exit_btn.clicked.connect(self.hide_sliding_panel)
@@ -1928,18 +1703,11 @@ class ECGMenu(QGroupBox):
                 color: white;
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                     stop:0 #ff6600, stop:1 #ff8c42);
-                border: none;
+                border: 2px solid #ff6600;
                 border-radius: 12px;
                 padding: {max(12, int(margin_size * 0.6))}px;
                 margin: {max(8, int(margin_size * 0.4))}px;
                 min-height: {max(30, int(margin_size * 1.5))}px;
-                box-shadow: 0 6px 20px rgba(255, 102, 0, 0.3);
-            }}
-            QLabel:hover {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                    stop:0 #ff8c42, stop:1 #ffaa00);
-                box-shadow: 0 6px 20px rgba(255, 102, 0, 0.4);
-                transform: translateY(-2px);
             }}
         """)
         title.setAlignment(Qt.AlignCenter)
@@ -1950,7 +1718,7 @@ class ECGMenu(QGroupBox):
         msg_frame.setStyleSheet("""
             QFrame {
                 background: white;
-                border: 1px solid #e0e0e0;
+                border: 2px solid #e0e0e0;
                 border-radius: 10px;
                 padding: 20px;
                 margin: 10px;
@@ -1958,7 +1726,7 @@ class ECGMenu(QGroupBox):
         """)
         msg_layout = QVBoxLayout(msg_frame)
         
-        confirm_msg = QLabel("Do you want to quit")
+        confirm_msg = QLabel("Are you sure you want to exit the application?")
         confirm_msg.setStyleSheet(f"""
             QLabel {{
                 font: bold {max(12, int(margin_size * 0.6))}pt Arial;
@@ -2127,18 +1895,11 @@ class ECGMenu(QGroupBox):
                 color: white;
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                     stop:0 #ff6600, stop:1 #ff8c42);
-                border: none;
+                border: 2px solid #ff6600;
                 border-radius: 12px;
                 padding: {max(12, int(margin_size * 0.6))}px;
                 margin: {max(8, int(margin_size * 0.4))}px;
                 min-height: {max(30, int(margin_size * 1.5))}px;
-                box-shadow: 0 6px 20px rgba(255, 102, 0, 0.3);
-            }}
-            QLabel:hover {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                    stop:0 #ff8c42, stop:1 #ffaa00);
-                box-shadow: 0 6px 20px rgba(255, 102, 0, 0.4);
-                transform: translateY(-2px);
             }}
         """)
         title_label.setAlignment(Qt.AlignCenter)
@@ -2284,15 +2045,14 @@ class ECGMenu(QGroupBox):
                             background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                                 stop:0 #4CAF50, stop:0.5 #45a049, stop:1 #4CAF50);
                             color: white;
-                            border: none;
+                            border: 2px solid #4CAF50;
                             border-radius: 8px;
                             padding: 8px;
                         }}
                         QPushButton:hover {{
                             background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                                 stop:0 #45a049, stop:0.5 #4CAF50, stop:1 #45a049);
-                            box-shadow: 0 6px 20px rgba(76, 175, 80, 0.4);
-                            transform: translateY(-3px);
+                            border: 2px solid #45a049;
                         }}
                     """)
                 elif style == 'danger':
@@ -2302,15 +2062,14 @@ class ECGMenu(QGroupBox):
                             background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                                 stop:0 #f44336, stop:0.5 #d32f2f, stop:1 #f44336);
                             color: white;
-                            border: none;
+                            border: 2px solid #f44336;
                             border-radius: 8px;
                             padding: 8px;
                         }}
                         QPushButton:hover {{
                             background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                                 stop:0 #d32f2f, stop:0.5 #f44336, stop:1 #d32f2f);
-                            box-shadow: 0 6px 20px rgba(244, 67, 54, 0.4);
-                            transform: translateY(-3px);
+                            border: 2px solid #d32f2f;
                         }}
                     """)
                 elif style == 'info':
@@ -2320,15 +2079,14 @@ class ECGMenu(QGroupBox):
                             background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                                 stop:0 #17a2b8, stop:0.5 #138496, stop:1 #17a2b8);
                             color: white;
-                            border: none;
+                            border: 2px solid #17a2b8;
                             border-radius: 8px;
                             padding: 8px;
                         }}
                         QPushButton:hover {{
                             background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
                                 stop:0 #138496, stop:0.5 #17a2b8, stop:1 #138496);
-                            box-shadow: 0 6px 20px rgba(23, 162, 184, 0.4);
-                            transform: translateY(-3px);
+                            border: 2px solid #138496;
                         }}
                     """)
                 
