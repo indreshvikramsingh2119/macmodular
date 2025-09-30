@@ -4,7 +4,7 @@ import threading
 import numpy as np
 import pandas as pd
 from PyQt5.QtCore import QTimer
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QMessageBox
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QMessageBox, QLabel
 from scipy.signal import find_peaks
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -110,6 +110,38 @@ class DemoManager:
             # Reset fixed metrics for new demo session
             self._demo_fixed_metrics = None
             self._running_demo = True
+            
+            # Start the dashboard timer when demo begins
+            try:
+                if hasattr(self.ecg_test_page, 'parent') and hasattr(self.ecg_test_page.parent, 'start_acquisition_timer'):
+                    self.ecg_test_page.parent.start_acquisition_timer()
+            except Exception:
+                pass
+            
+            # Immediately set hardcoded demo metrics on ECG test page and dashboard
+            try:
+                # Update ECG test page metrics
+                if hasattr(self.ecg_test_page, 'metric_labels'):
+                    self.ecg_test_page.metric_labels.get('heart_rate', QLabel()).setText("60")
+                    self.ecg_test_page.metric_labels.get('pr_interval', QLabel()).setText("160")
+                    self.ecg_test_page.metric_labels.get('qrs_duration', QLabel()).setText("85")
+                    self.ecg_test_page.metric_labels.get('qrs_axis', QLabel()).setText("0°")
+                    self.ecg_test_page.metric_labels.get('st_segment', QLabel()).setText("90")
+                    print("✅ Demo metrics set on ECG test page")
+                
+                # Update dashboard metrics (same values)
+                if hasattr(self.ecg_test_page, 'parent') and hasattr(self.ecg_test_page.parent, 'metric_labels'):
+                    dashboard = self.ecg_test_page.parent
+                    dashboard.metric_labels.get('heart_rate', QLabel()).setText("60 BPM")
+                    dashboard.metric_labels.get('pr_interval', QLabel()).setText("160 ms")
+                    dashboard.metric_labels.get('qrs_duration', QLabel()).setText("85 ms")
+                    dashboard.metric_labels.get('qrs_axis', QLabel()).setText("0°")
+                    dashboard.metric_labels.get('st_interval', QLabel()).setText("90 ms")
+                    dashboard.metric_labels.get('sampling_rate', QLabel()).setText("80 Hz")
+                    print("✅ Demo metrics set on dashboard")
+            except Exception as e:
+                print(f"⚠️ Could not set demo metrics: {e}")
+            
             # Start demo data generation in the existing 12-lead grid
             self.start_demo_data()
             
@@ -200,7 +232,7 @@ class DemoManager:
                     self.ecg_test_page.data[lead_index][:count] = arr - baseline_mean
             
             # Set warmup window to avoid initial visual artifacts
-            self._warmup_until = time.time() + 5.0
+            self._warmup_until = time.time() + 1.0
             self._demo_started_at = time.time()
 
             # Make an immediate plot update once after prefill for stable first frame
@@ -386,9 +418,9 @@ class DemoManager:
         if now_ts < self._warmup_until:
             warmup_left = max(0.0, self._warmup_until - now_ts)
             warmup_total = max(1e-6, self._warmup_until - (self._demo_started_at or now_ts))
-            # Ramp from 0.1 to 1.0 linearly across warmup
+            # Ramp from 0.8 to 1.0 linearly across warmup (minimal ramp for faster display)
             progress = 1.0 - (warmup_left / warmup_total)
-            ramp = max(0.1, min(1.0, 0.1 + 0.9 * progress))
+            ramp = max(0.8, min(1.0, 0.8 + 0.2 * progress))
             effective_gain = current_gain * ramp
         else:
             effective_gain = current_gain

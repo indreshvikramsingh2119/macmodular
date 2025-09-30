@@ -1,1 +1,53 @@
-{"Divyansh": "divyansh", "ptr": "ptr", "Divyaansh": "div", "asd": "qwe", "12345": "div", "123456": "div", "123456789": "123456789"}
+{
+  "Divyansh": {
+    "password": "divyansh"
+  },
+  "ptr": {
+    "password": "ptr"
+  },
+  "Divyaansh": {
+    "password": "div"
+  },
+  "asd": {
+    "password": "qwe"
+  },
+  "12345": {
+    "password": "div"
+  },
+  "123456": {
+    "password": "div"
+  },
+  "123456789": {
+    "password": "123456789"
+  },
+  "96789089": {
+    "password": "vijay",
+    "full_name": "vijay",
+    "phone": "96789089",
+    "serial_id": "1212",
+    "email": "",
+    "age": "23",
+    "gender": "male",
+    "address": "122"
+  },
+  "9898989898989": {
+    "password": "jaibhole",
+    "full_name": "textai",
+    "phone": "9898989898989",
+    "serial_id": "12345",
+    "email": "",
+    "age": "11",
+    "gender": "male",
+    "address": "122034"
+  },
+  "9999999": {
+    "password": "12345",
+    "full_name": "rajesh",
+    "phone": "9999999",
+    "serial_id": "12qwer",
+    "email": "",
+    "age": "12",
+    "gender": "male",
+    "address": "1220"
+  }
+}

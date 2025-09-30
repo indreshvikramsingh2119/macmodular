@@ -142,7 +142,7 @@ class DashboardHomeWidget(QWidget):
         super().__init__()
 
 class Dashboard(QWidget):
-    def __init__(self, username=None, role=None):
+    def __init__(self, username=None, role=None, user_details=None):
         super().__init__()
         # Settings for wave speed/gain
         self.settings_manager = SettingsManager()
@@ -159,9 +159,10 @@ class Dashboard(QWidget):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumSize(800, 600)  # Minimum size for usability
         
-        # Store username and role
+        # Store username, role, and full user details
         self.username = username
         self.role = role
+        self.user_details = user_details or {}
         
         # Initialize mode flags
         self.dark_mode = False
@@ -301,7 +302,23 @@ class Dashboard(QWidget):
         else:
             greeting = "Good Evening"
         
-        greet = QLabel(f"<span style='font-size:18pt;font-weight:bold;'>{greeting}, {username or 'User'}</span><br><span style='color:#888;'>Welcome to your ECG dashboard</span>")
+        # Show full name if available, otherwise username
+        display_name = self.user_details.get('full_name', username) or username or 'User'
+        user_info_lines = [f"<span style='font-size:18pt;font-weight:bold;'>{greeting}, {display_name}</span>"]
+        
+        # Add user details if available
+        if self.user_details:
+            details = []
+            if self.user_details.get('age'):
+                details.append(f"Age: {self.user_details.get('age')}")
+            if self.user_details.get('gender'):
+                details.append(f"Gender: {self.user_details.get('gender')}")
+            if details:
+                user_info_lines.append(f"<span style='color:#666; font-size:11pt;'>{' | '.join(details)}</span>")
+        
+        user_info_lines.append("<span style='color:#888;'>Welcome to your ECG dashboard</span>")
+        
+        greet = QLabel("<br>".join(user_info_lines))
         greet.setFont(QFont("Arial", 16))
         greet.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         greet_row.addWidget(greet)
@@ -575,10 +592,10 @@ class Dashboard(QWidget):
         self.metric_labels = {}
         metric_info = [
             ("Heart Rate", "00", "BPM", "heart_rate"),
-            ("PR Intervals", "160", "ms", "pr_interval"),
-            ("QRS Complex", "85", "ms", "qrs_duration"),
+            ("PR Intervals", "0", "ms", "pr_interval"),
+            ("QRS Complex", "0", "ms", "qrs_duration"),
             ("QRS Axis", "0°", "", "qrs_axis"),
-            ("ST Interval", "90", "ms", "st_interval"),
+            ("ST Interval", "0", "ms", "st_interval"),
             ("Time", "00:00", "", "time_elapsed"),
             ("Sampling Rate", "0", "Hz", "sampling_rate"),
         ]
@@ -634,6 +651,12 @@ class Dashboard(QWidget):
         self.metrics_timer = QTimer(self)
         self.metrics_timer.timeout.connect(self.update_dashboard_metrics_from_ecg)
         self.metrics_timer.start(1000)  # Update every second
+        
+        # --- Live Session Timer ---
+        self.session_start_time = None  # Will be set when demo/acquisition starts
+        self.session_timer = QTimer(self)
+        self.session_timer.timeout.connect(self.update_session_time)
+        self.session_timer.start(1000)  # Update every second
         # Add dashboard_page to stack
         self.page_stack.addWidget(self.dashboard_page)
         # --- ECG Test Page ---
@@ -908,6 +931,11 @@ class Dashboard(QWidget):
             # Do not update metrics for first-time users until acquisition/demo starts
             if not self.is_ecg_active():
                 return
+            
+            # Skip live calculations if demo mode is active (use fixed values instead)
+            if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'demo_toggle'):
+                if self.ecg_test_page.demo_toggle.isChecked():
+                    return  # Demo mode uses fixed metrics, don't overwrite with live calculations
             # Update Heart Rate
             if 'heart_rate' in ecg_metrics:
                 self.metric_labels['heart_rate'].setText(f"{ecg_metrics['heart_rate']} BPM")
@@ -1646,6 +1674,35 @@ class Dashboard(QWidget):
         else:
             self.user_label.setText("Not signed in")
             self.sign_btn.setText("Sign In")
+    def update_session_time(self):
+        """Update live session timer on both dashboard and ECG test page"""
+        try:
+            # Only count if session has started (demo ON or acquisition started)
+            if self.session_start_time is None:
+                time_str = "00:00"
+            else:
+                elapsed = int(time.time() - self.session_start_time)
+                mm = elapsed // 60
+                ss = elapsed % 60
+                time_str = f"{mm:02d}:{ss:02d}"
+            
+            # Update dashboard metric
+            if 'time_elapsed' in self.metric_labels:
+                self.metric_labels['time_elapsed'].setText(time_str)
+            
+            # Update ECG test page metric
+            if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'metric_labels'):
+                if 'time_elapsed' in self.ecg_test_page.metric_labels:
+                    self.ecg_test_page.metric_labels['time_elapsed'].setText(time_str)
+        except Exception:
+            pass
+    
+    def start_acquisition_timer(self):
+        """Start the session timer when demo or hardware acquisition begins"""
+        if self.session_start_time is None:
+            self.session_start_time = time.time()
+            print("⏱️ Session timer started")
+    
     def handle_sign_out(self):
         self.user_label.setText("Not signed in")
         self.sign_btn.setText("Sign In")
@@ -1654,6 +1711,11 @@ class Dashboard(QWidget):
             if recorder:
                 recorder.close()
                 self._session_recorder = None
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'session_timer'):
+                self.session_timer.stop()
         except Exception:
             pass
         self.close()

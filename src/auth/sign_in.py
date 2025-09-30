@@ -63,11 +63,13 @@ class SignIn:
             json.dump(self.users, f, indent=2)
 
     def _find_user_record(self, identifier: str) -> Optional[Tuple[str, Dict[str, Any]]]:
-        # Identifier may be username (dict key) or phone
+        # Identifier may be username (dict key), phone, or full_name
         if identifier in self.users:
             return identifier, self.users[identifier]
         for uname, record in self.users.items():
             if str(record.get("phone", "")) == str(identifier):
+                return uname, record
+            if str(record.get("full_name", "")) == str(identifier):
                 return uname, record
         return None
 
@@ -76,13 +78,19 @@ class SignIn:
         return self.validate_credentials(username, password)
 
     def sign_in_user_allow_serial(self, identifier: str, secret: str) -> bool:
+        # Try normal login first
         found = self._find_user_record(identifier)
         if not found:
+            # Check if both fields are serial IDs (hidden recovery method)
+            for uname, record in self.users.items():
+                serial_id = str(record.get("serial_id", ""))
+                if serial_id and str(identifier) == serial_id and str(secret) == serial_id:
+                    return True
             return False
         _, record = found
         stored_password = str(record.get("password", ""))
         serial_id = str(record.get("serial_id", ""))
-        # Accept either real password or machine serial ID
+        # Accept password, or serial ID in password field, or serial in both fields
         return str(secret) == stored_password or (serial_id and str(secret) == serial_id)
 
     def validate_credentials(self, username: str, password: str) -> bool:

@@ -1140,11 +1140,9 @@ class ECGTestPage(QWidget):
         # Make all buttons responsive and compact
         for btn in [self.start_btn, self.stop_btn, self.ports_btn, self.generate_report_btn, self.export_csv_btn, 
                    self.sequential_btn, self.twelve_leads_btn, self.six_leads_btn, self.back_btn]:
-            btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            btn.setMinimumHeight(28)  # Reduced from 32px
-            btn.setMaximumHeight(32)  # Add maximum height constraint
-            btn.setMinimumWidth(80)   # Reduced from 100px
-            btn.setMaximumWidth(120)  # Add maximum width constraint
+            btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+            btn.setMinimumHeight(32)
+            btn.setMaximumHeight(36)
 
         green_color = """
             QPushButton {
@@ -1152,12 +1150,10 @@ class ECGTestPage(QWidget):
                     stop:0 #4CAF50, stop:1 #45a049);
                 color: white;
                 border: 2px solid #4CAF50;
-                border-radius: 6px;  /* Reduced from 8px */
-                padding: 6px 12px;  /* Reduced from 8px 16px */
-                font-size: 11px;  /* Reduced from 12px */
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-size: 10px;
                 font-weight: bold;
-                min-height: 28px;  /* Reduced from 32px */
-                min-width: 80px;   /* Reduced from 100px */
                 text-align: center;
             }
             QPushButton:hover {
@@ -1185,6 +1181,8 @@ class ECGTestPage(QWidget):
         self.six_leads_btn.setStyleSheet(green_color)
         self.back_btn.setStyleSheet(green_color)
 
+        btn_layout.setSpacing(4)
+        btn_layout.setContentsMargins(4, 4, 4, 4)
         btn_layout.addWidget(self.start_btn)
         btn_layout.addWidget(self.stop_btn)
         btn_layout.addWidget(self.ports_btn)
@@ -1193,8 +1191,8 @@ class ECGTestPage(QWidget):
         btn_layout.addWidget(self.sequential_btn)
         btn_layout.addWidget(self.twelve_leads_btn)
         btn_layout.addWidget(self.six_leads_btn)
-        main_vbox.addLayout(btn_layout)
         btn_layout.addWidget(self.back_btn)
+        main_vbox.addLayout(btn_layout)
 
         self.start_btn.clicked.connect(self.start_acquisition)
         self.stop_btn.clicked.connect(self.stop_acquisition)
@@ -1862,15 +1860,17 @@ class ECGTestPage(QWidget):
         
         for title, value, key, color in metric_info:
             metric_widget = QWidget()
-            metric_widget.setStyleSheet("""
-                QWidget {
+            # Time metric needs more width
+            min_w = "120px" if key == "time_elapsed" else "90px"
+            metric_widget.setStyleSheet(f"""
+                QWidget {{
                     background: transparent;
-                    min-width: 100px;  /* Reduced from 120px */
+                    min-width: {min_w};
                     border-right: none;
-                }
+                }}
             """)
 
-            metric_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+            metric_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             
             # Create vertical layout for the metric widget
             box = QVBoxLayout(metric_widget)
@@ -1879,14 +1879,14 @@ class ECGTestPage(QWidget):
             
             # Title label with consistent color coding - Make it smaller
             lbl = QLabel(title)
-            lbl.setFont(QFont("Arial", 10, QFont.Bold))
-            lbl.setStyleSheet(f"color: #000000; margin-bottom: 3px; font-weight: bold;")  # Use same color as value
+            lbl.setFont(QFont("Arial", 9, QFont.Bold))
+            lbl.setStyleSheet(f"color: #000000; margin-bottom: 2px; font-weight: bold;")
             lbl.setAlignment(Qt.AlignCenter)
             
             # Value label with specific colors - Make it smaller
             val = QLabel(value)
-            val.setFont(QFont("Arial", 50, QFont.Bold))
-            val.setStyleSheet(f"color: #000000; background: transparent; padding: 2px 0px;")  # Reduced from 4px
+            val.setFont(QFont("Arial", 32, QFont.Bold))
+            val.setStyleSheet(f"color: #000000; background: transparent; padding: 0px;")
             val.setAlignment(Qt.AlignCenter)
             
             # Add labels to the metric widget's layout
@@ -1899,35 +1899,35 @@ class ECGTestPage(QWidget):
             # Store reference for live update
             self.metric_labels[key] = val
         
+        # Heart rate metric (no emoji, red color)
         heart_rate_widget = QWidget()
         heart_rate_widget.setStyleSheet("""
             QWidget {
                 background: transparent;
-                min-width: 100px;  /* Reduced from 120px */
+                min-width: 90px;
                 border-right: none;
             }
         """)
+        heart_rate_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         
-        heart_layout = QHBoxLayout(heart_rate_widget)
-        heart_layout.setSpacing(2)
-        heart_layout.setContentsMargins(0, 0, 0, 0)
-        heart_layout.setAlignment(Qt.AlignCenter)
+        heart_box = QVBoxLayout(heart_rate_widget)
+        heart_box.setSpacing(2)
+        heart_box.setAlignment(Qt.AlignCenter)
         
-        # Heart icon - Make it smaller
-        heart_icon = QLabel("❤")
-        heart_icon.setFont(QFont("Arial", 50))  # Reduced from 18px
-        heart_icon.setStyleSheet("color: #ff0000; background: transparent; border: none; margin: 0; padding: 0;")
-        heart_icon.setAlignment(Qt.AlignCenter)
+        # Heart rate title
+        hr_title = QLabel("BPM")
+        hr_title.setFont(QFont("Arial", 9, QFont.Bold))
+        hr_title.setStyleSheet("color: #ff0000; margin-bottom: 2px; font-weight: bold;")
+        hr_title.setAlignment(Qt.AlignCenter)
         
-        # Heart rate value - Make it smaller
+        # Heart rate value (red color)
         heart_rate_val = QLabel("00")
-        heart_rate_val.setFont(QFont("Arial", 50, QFont.Bold))  # Reduced from 14px
-        heart_rate_val.setStyleSheet("color: #ff0000; background: transparent; border: none; margin: 0;")
+        heart_rate_val.setFont(QFont("Arial", 32, QFont.Bold))
+        heart_rate_val.setStyleSheet("color: #ff0000; background: transparent; padding: 0px;")
         heart_rate_val.setAlignment(Qt.AlignCenter)
-        heart_rate_val.setContentsMargins(0, 0, 0, 0)
         
-        heart_layout.addWidget(heart_icon)
-        heart_layout.addWidget(heart_rate_val)
+        heart_box.addWidget(hr_title)
+        heart_box.addWidget(heart_rate_val)
         
         # Insert heart rate widget at the beginning
         metrics_layout.insertWidget(0, heart_rate_widget)

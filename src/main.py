@@ -322,9 +322,9 @@ class LoginRegisterDialog(QDialog):
         widget = QWidget()
         layout = QVBoxLayout()
         self.login_email = QLineEdit()
-        self.login_email.setPlaceholderText("Username or Phone")
+        self.login_email.setPlaceholderText("Full Name")
         self.login_password = QLineEdit()
-        self.login_password.setPlaceholderText("Password (or Machine Serial ID)")
+        self.login_password.setPlaceholderText("Password")
         self.login_password.setEchoMode(QLineEdit.Password)
         login_btn = QPushButton("Login")
         login_btn.setObjectName("LoginBtn")
@@ -423,42 +423,75 @@ class LoginRegisterDialog(QDialog):
         self.reg_password = QLineEdit()
         self.reg_password.setPlaceholderText("Password")
         self.reg_password.setEchoMode(QLineEdit.Password)
+        
         self.reg_confirm = QLineEdit()
         self.reg_confirm.setPlaceholderText("Confirm Password")
         self.reg_confirm.setEchoMode(QLineEdit.Password)
+        
         register_btn = QPushButton("Sign Up")
         register_btn.setObjectName("SignUpBtn")
         register_btn.clicked.connect(self.handle_register)
+        
         for w in [self.reg_serial, self.reg_name, self.reg_age, self.reg_gender, self.reg_address, self.reg_phone, self.reg_password, self.reg_confirm]:
             w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        
         # Apply dashboard color coding
         for w in [self.reg_serial, self.reg_name, self.reg_age, self.reg_gender, self.reg_address, self.reg_phone, self.reg_password, self.reg_confirm]:
             w.setStyleSheet("border: 2px solid #ff6600; border-radius: 8px; padding: 6px 10px; font-size: 15px; background: #f7f7f7; color: #222;")
+        
         register_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 10px; padding: 8px 0; font-size: 16px; font-weight: bold;")
         register_btn.setMinimumHeight(36)
+        
+        # Create password field with eye toggle
+        password_row = QHBoxLayout()
+        password_row.addWidget(self.reg_password)
+        self.password_eye_btn = QPushButton("👁")
+        self.password_eye_btn.setFixedSize(36, 36)
+        self.password_eye_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 8px; font-size: 16px;")
+        self.password_eye_btn.clicked.connect(lambda: self.toggle_password_visibility(self.reg_password, self.password_eye_btn))
+        password_row.addWidget(self.password_eye_btn)
+        
+        # Create confirm password field with eye toggle
+        confirm_row = QHBoxLayout()
+        confirm_row.addWidget(self.reg_confirm)
+        self.confirm_eye_btn = QPushButton("👁")
+        self.confirm_eye_btn.setFixedSize(36, 36)
+        self.confirm_eye_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 8px; font-size: 16px;")
+        self.confirm_eye_btn.clicked.connect(lambda: self.toggle_password_visibility(self.reg_confirm, self.confirm_eye_btn))
+        confirm_row.addWidget(self.confirm_eye_btn)
+        
         layout.addWidget(self.reg_serial)
         layout.addWidget(self.reg_name)
         layout.addWidget(self.reg_age)
         layout.addWidget(self.reg_gender)
         layout.addWidget(self.reg_address)
         layout.addWidget(self.reg_phone)
-        layout.addWidget(self.reg_password)
-        layout.addWidget(self.reg_confirm)
+        layout.addLayout(password_row)
+        layout.addLayout(confirm_row)
         layout.addWidget(register_btn)
         layout.addStretch(1)
         widget.setLayout(layout)
         return widget
 
     def handle_login(self):
-        email_or_phone = self.login_email.text()
+        identifier = self.login_email.text()  # Can be full name, username, or phone
         password_or_serial = self.login_password.text()
-        if self.sign_in_logic.sign_in_user_allow_serial(email_or_phone, password_or_serial):
-            self.result = True
-            self.username = email_or_phone
-            self.user_details = {}
-            self.accept()
+        if self.sign_in_logic.sign_in_user_allow_serial(identifier, password_or_serial):
+            # Get the actual user record for details
+            found = self.sign_in_logic._find_user_record(identifier)
+            if found:
+                username, record = found
+                self.result = True
+                self.username = username
+                self.user_details = record  # Store full user details
+                self.accept()
+            else:
+                self.result = True
+                self.username = identifier
+                self.user_details = {}
+                self.accept()
         else:
-            QMessageBox.warning(self, "Error", "Invalid credentials. Use password or machine serial ID.")
+            QMessageBox.warning(self, "Error", "Invalid credentials. Please check your full name and password.")
 
     def handle_phone_login(self):
         phone, ok = QInputDialog.getText(self, "Login with Phone Number", "Enter your phone number:")
@@ -500,6 +533,15 @@ class LoginRegisterDialog(QDialog):
             return
         QMessageBox.information(self, "Success", "Registration successful! You can now sign in.")
         self.stacked.setCurrentIndex(0)
+    
+    def toggle_password_visibility(self, password_field, eye_button):
+        """Toggle password visibility between hidden and visible"""
+        if password_field.echoMode() == QLineEdit.Password:
+            password_field.setEchoMode(QLineEdit.Normal)
+            eye_button.setText("🔒")
+        else:
+            password_field.setEchoMode(QLineEdit.Password)
+            eye_button.setText("👁")
 
     def _show_nav_window(self, NavClass, text):
         nav_win = NavClass()
@@ -643,8 +685,8 @@ def main():
                     except Exception as e:
                         logger.warning(f"Could not set machine serial ID for crash reporting: {e}")
                     
-                    # Create and show dashboard
-                    dashboard = Dashboard(username=login.username, role=None)
+                    # Create and show dashboard with user details
+                    dashboard = Dashboard(username=login.username, role=None, user_details=login.user_details)
                     # Attach a session recorder for this user
                     try:
                         user_record = None
