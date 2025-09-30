@@ -4946,10 +4946,10 @@ class ECGTestPage(QWidget):
                         continue
                 return
 
-            # SERIAL branch
+            # SERIAL branch - read available data without blocking
             lines_processed = 0
-            max_attempts = 20
-            while lines_processed < max_attempts:
+            max_packets_per_update = 5  # Reduced from 20 to prevent UI freezing
+            while lines_processed < max_packets_per_update:
                 try:
                     all_8_leads = self.serial_reader.read_value()
                     if all_8_leads:
@@ -4972,6 +4972,7 @@ class ECGTestPage(QWidget):
                             print(f"❌ Error updating sampling rate: {e}")
                         lines_processed += 1
                     else:
+                        # No more data available in buffer, stop reading
                         break
                 except Exception as e:
                     print(f"❌ Error reading serial data: {e}")
@@ -5006,16 +5007,20 @@ class ECGTestPage(QWidget):
                     except Exception as e:
                         print(f"❌ Error updating plot {i}: {e}")
                         continue
+                
+                # Calculate metrics less frequently to avoid blocking (every 5 updates = ~250ms)
                 try:
-                    self.calculate_ecg_metrics()
+                    if self.update_count % 5 == 0:
+                        self.calculate_ecg_metrics()
                 except Exception as e:
                     print(f"❌ Error calculating ECG metrics: {e}")
+                
                 try:
                     if hasattr(self, 'heartbeat_counter'):
                         self.heartbeat_counter += 1
                     else:
                         self.heartbeat_counter = 0
-                    if self.heartbeat_counter % 10 == 0 and len(self.data) > 1:
+                    if self.heartbeat_counter % 20 == 0 and len(self.data) > 1:  # Reduced frequency
                         heart_rate = self.calculate_heart_rate(self.data[1])
                         if heart_rate > 0:
                             print(f"💓 HEARTBEAT: {heart_rate} BPM")
