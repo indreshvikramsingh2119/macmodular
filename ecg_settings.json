@@ -11,7 +11,7 @@
   "printer_average_wave": "off",
   "printer_rhythm_lead": "off",
   "printer_sensitivity": "High",
-  "filter_low_pass": "100",
+  "filter_low_pass": "off",
   "filter_high_pass": "0.5",
   "filter_notch": "60",
   "filter_smoothing": "medium",
