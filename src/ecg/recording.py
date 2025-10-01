@@ -649,6 +649,18 @@ class ECGMenu(QGroupBox):
         content_widget = self.create_save_ecg_content()
         self.show_sliding_panel(content_widget, "Save ECG Details", "Save ECG")
 
+    def get_user_specific_patient_file(self):
+        """Get user-specific patient details file path"""
+        username = "default"
+        
+        # Try to get username from dashboard
+        if self.dashboard and hasattr(self.dashboard, 'username') and self.dashboard.username:
+            username = self.dashboard.username
+        
+        # Sanitize username for file name (remove special characters)
+        safe_username = "".join(c for c in username if c.isalnum() or c in ('_', '-')).lower()
+        return f"patient_details_{safe_username}.json"
+
     def create_save_ecg_content(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -877,16 +889,18 @@ class ECGMenu(QGroupBox):
         gender_menu.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         form_layout.addWidget(gender_menu, 4, 1)
 
-        # Prefill previously saved values if available
+        # Prefill previously saved values if available (user-specific)
         try:
             prefill = None
+            user_file = self.get_user_specific_patient_file()
+            
             # 1) Use in-memory cached details if present
             if hasattr(self, "patient_details") and isinstance(self.patient_details, dict):
                 prefill = self.patient_details
-            # 2) Else attempt to load from disk cache to persist across restarts
+            # 2) Else attempt to load from user-specific disk cache to persist across restarts
             if prefill is None:
                 try:
-                    with open("last_patient_details.json", "r") as jf:
+                    with open(user_file, "r") as jf:
                         prefill = json.load(jf)
                         # Cache in memory for subsequent opens during this session
                         setattr(self, "patient_details", prefill)
@@ -894,7 +908,7 @@ class ECGMenu(QGroupBox):
                     prefill = None
 
             if prefill:
-                pd = self.patient_details
+                pd = prefill
                 # Org. (optional in cached data)
                 if "Org." in pd and pd["Org."]:
                     entries["Org."].setText(pd["Org."]) 
@@ -976,10 +990,11 @@ class ECGMenu(QGroupBox):
             setattr(self, "patient_details", patient_details)
             if self.dashboard:
                 setattr(self.dashboard, "patient_details", patient_details)
-            # Persist last details to disk so they survive app restarts
+            # Persist last details to user-specific disk file so they survive app restarts
             try:
-                with open("last_patient_details.json", "w") as jf:
-                    json.dump(patient_details, jf)
+                user_file = self.get_user_specific_patient_file()
+                with open(user_file, "w") as jf:
+                    json.dump(patient_details, jf, indent=2)
             except Exception as disk_err:
                 print(f"⚠️ Could not persist patient details: {disk_err}")
         except Exception as e:
@@ -989,6 +1004,7 @@ class ECGMenu(QGroupBox):
             with open("ecg_data.txt", "a") as file:
                 file.write(f"{values['Org.']}, {values['Doctor']}, {values['Patient Name']}, {values['Age']}, {values['Gender']}\n")
             QMessageBox.information(self.parent(), "Saved", "ECG details saved successfully!")
+            # Close the panel after successful save (values remain persisted for next open)
             self.hide_sliding_panel()
         except Exception as e:
             QMessageBox.critical(self.parent(), "Error", f"Failed to save: {e}")
