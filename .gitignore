@@ -149,4 +149,9 @@ docs/_build/
 
 # Configuration overrides
 local_config.json
-user_config.json# Allow clutter directory
+user_config.json
+
+# Session files (large data files)
+reports/sessions/*.jsonl
+
+# Allow clutter directory
