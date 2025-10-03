@@ -667,7 +667,7 @@ def main():
                         if isinstance(users, dict) and login.username in users:
                             record = users.get(login.username)
                         else:
-                            # Fallback: search by phone/contact stored under 'phone'    
+                            # Fallback: search by phone/contact stored under 'phone'    dw
                             for uname, rec in (users or {}).items():
                                 try:
                                     if str(rec.get('phone', '')) == str(login.username):
