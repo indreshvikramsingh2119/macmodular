@@ -1002,7 +1002,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     
     # Create a rectangular box for conclusions (shifted right) - SAME POSITION
     from reportlab.graphics.shapes import Rect
-    conclusion_box = Rect(200, conclusion_y_start - 35, 300, 50,  # x shifted from 50 to 200
+    conclusion_box = Rect(200, conclusion_y_start - 35, 300, 55,  # x shifted from 50 to 200
                          fillColor=None, strokeColor=colors.black, strokeWidth=1)
     master_drawing.add(conclusion_box)
     
@@ -1011,7 +1011,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     conclusion_header = String(350, conclusion_y_start + 8, "✦ CONCLUSION ✦", 
                               fontSize=11, fontName="Helvetica-Bold", 
                               fillColor=colors.HexColor("#2c3e50"),
-                              textAnchor="middle")  # This centers the text
+                              textAnchor="middle")  # This centers the text₹
     master_drawing.add(conclusion_header)
     
     # Column 1: First 3 conclusions (left side of box)

@@ -426,8 +426,10 @@ class DemoManager:
         # Get current gain
         try:
             current_gain = float(self.ecg_test_page.settings_manager.get_wave_gain()) / 10.0
+            print(f"🎛️ Demo gain: {current_gain:.2f} (from settings: {self.ecg_test_page.settings_manager.get_wave_gain()})")
         except Exception:
             current_gain = 1.0
+            print(f"🎛️ Demo gain: {current_gain:.2f} (fallback)")
 
         # During warmup, ramp the gain to avoid overshoot and clipping
         now_ts = time.time()
@@ -470,6 +472,10 @@ class DemoManager:
                 # Update Y range dynamically based on gain (exactly like divyansh.py)
                 max_amp = max(1.5 * current_gain, float(np.max(np.abs(display_data))) * 1.2 + 1e-6)
                 self.ecg_test_page.plot_widgets[i].setYRange(-max_amp, max_amp)
+                
+                # Debug gain effect for first few leads
+                if i < 3 and hasattr(self, '_debug_counter') and self._debug_counter % 200 == 0:
+                    print(f"🎛️ Demo Lead {i}: gain={current_gain:.2f}, max_amp={max_amp:.2f}, data_range={np.max(np.abs(display_data)):.2f}")
                 
                 # X range matches current time window (exactly like divyansh.py)
                 self.ecg_test_page.plot_widgets[i].setXRange(0, time_window)

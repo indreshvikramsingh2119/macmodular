@@ -1754,18 +1754,25 @@ class ECGTestPage(QWidget):
             data_mean = (p1 + p99) / 2.0
             data_std = np.std(valid_data[(valid_data >= p1) & (valid_data <= p99)])
             
+            # Get current gain setting to respect user's gain control
+            current_gain = self.settings_manager.get_wave_gain() / 10.0
+            
             # Calculate appropriate Y-range with some padding
             if data_std > 0:
                 # Use standard deviation within central band
-                padding = max(data_std * 4, 200)  # Increased padding for better visibility
+                base_padding = max(data_std * 4, 200)  # Increased padding for better visibility
+                padding = base_padding * current_gain  # Scale by gain setting
                 y_min = data_mean - padding
                 y_max = data_mean + padding
+                print(f"📊 Basic Y-range: base_padding={base_padding:.1f}, gain={current_gain:.1f}, final_padding={padding:.1f}")
             else:
                 # Fallback: use percentile window
                 data_range = max(p99 - p1, 300)
-                padding = max(data_range * 0.3, 200)
+                base_padding = max(data_range * 0.3, 200)
+                padding = base_padding * current_gain  # Scale by gain setting
                 y_min = data_mean - padding
                 y_max = data_mean + padding
+                print(f"📊 Basic Y-range (fallback): base_padding={base_padding:.1f}, gain={current_gain:.1f}, final_padding={padding:.1f}")
             
             # Ensure reasonable bounds
             y_min = max(y_min, -8000)
@@ -3014,19 +3021,25 @@ class ECGTestPage(QWidget):
             data_mean = (p1 + p99) / 2.0
             data_std = np.std(valid_data[(valid_data >= p1) & (valid_data <= p99)])
             
+            # Get current gain setting to respect user's gain control
+            current_gain = self.settings_manager.get_wave_gain() / 10.0
+            
             # Calculate appropriate Y-range with adaptive padding based on signal source
             if signal_source == "human_body":
                 # Use smaller padding for human body signals
-                padding = max(data_std * 2, 20)  # Reduced minimum padding
-                print(f"📊 Human body Y-range: padding={padding:.1f}")
+                base_padding = max(data_std * 2, 20)  # Reduced minimum padding
+                padding = base_padding * current_gain  # Scale by gain setting
+                print(f"📊 Human body Y-range: base_padding={base_padding:.1f}, gain={current_gain:.1f}, final_padding={padding:.1f}")
             elif signal_source == "weak_body":
                 # Even smaller padding for very weak signals
-                padding = max(data_std * 1.5, 10)  # Minimal padding
-                print(f"📊 Weak body Y-range: padding={padding:.1f}")
+                base_padding = max(data_std * 1.5, 10)  # Minimal padding
+                padding = base_padding * current_gain  # Scale by gain setting
+                print(f"📊 Weak body Y-range: base_padding={base_padding:.1f}, gain={current_gain:.1f}, final_padding={padding:.1f}")
             else:
                 # Current logic for hardware
-                padding = max(data_std * 4, 200)  # Original padding
-                print(f"📊 Hardware Y-range: padding={padding:.1f}")
+                base_padding = max(data_std * 4, 200)  # Original padding
+                padding = base_padding * current_gain  # Scale by gain setting
+                print(f"📊 Hardware Y-range: base_padding={base_padding:.1f}, gain={current_gain:.1f}, final_padding={padding:.1f}")
             
             if data_std > 0:
                 y_min = data_mean - padding
@@ -3034,6 +3047,7 @@ class ECGTestPage(QWidget):
             else:
                 # Fallback: use percentile window
                 data_range = max(p99 - p1, 50 if signal_source in ["human_body", "weak_body"] else 300)
+                data_range = data_range * current_gain  # Scale by gain setting
                 y_min = data_mean - data_range / 2
                 y_max = data_mean + data_range / 2
             
@@ -5034,6 +5048,17 @@ class ECGTestPage(QWidget):
                 except Exception as e:
                     print(f"❌ Error detecting signal source for serial plots: {e}")
                 
+                # Get current wave speed for time scaling
+                try:
+                    wave_speed = float(self.settings_manager.get_wave_speed())
+                except Exception:
+                    wave_speed = 25.0
+                
+                # Calculate time scaling based on wave speed (same logic as demo mode)
+                baseline_seconds = 10.0
+                seconds_scale = (25.0 / max(1e-6, wave_speed))
+                seconds_to_show = baseline_seconds * seconds_scale
+                
                 for i in range(len(self.leads)):
                     try:
                         if i < len(self.data_lines):
@@ -5041,9 +5066,23 @@ class ECGTestPage(QWidget):
                             if i < len(self.data) and len(self.data[i]) > 0:
                                 gain_factor = self.settings_manager.get_wave_gain() / 10.0
                                 scaled_data = self.apply_adaptive_gain(self.data[i], signal_source, gain_factor)
-                                self.data_lines[i].setData(scaled_data)
+                                
+                                # Apply wave speed scaling to time axis (same as demo mode)
+                                n = len(scaled_data)
+                                # Use the same sampling rate as demo mode (150 Hz for CSV, 80 Hz for hardware)
+                                sampling_rate = 80.0  # Hardware sampling rate
+                                time_axis = np.arange(n, dtype=float) / sampling_rate
+                                
+                                # Scale time axis based on wave speed
+                                time_axis = time_axis * seconds_scale
+                                
+                                self.data_lines[i].setData(time_axis, scaled_data)
                                 # Use adaptive Y-range based on scaled data
                                 self.update_plot_y_range_adaptive(i, signal_source, data_override=scaled_data)
+                                
+                                # Debug wave speed effect for first few leads
+                                if i < 3 and hasattr(self, '_debug_counter') and self._debug_counter % 200 == 0:
+                                    print(f"🎛️ Serial Lead {i}: speed={wave_speed:.1f}mm/s, scale={seconds_scale:.2f}, time_range={time_axis[-1]:.2f}s")
                             else:
                                 self.data_lines[i].setData(self.data[i])
                                 self.update_plot_y_range(i)
