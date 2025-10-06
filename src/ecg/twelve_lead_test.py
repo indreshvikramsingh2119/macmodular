@@ -893,6 +893,7 @@ class ECGTestPage(QWidget):
         self.max_buffer_size = 10000  # Maximum buffer size to prevent memory issues
         self.memory_check_interval = 1000  # Check memory every 1000 updates
         self.update_count = 0
+        # HR smoothing/lock removed; use original calculation
         
         # Initialize crash logger
         self.crash_logger = get_crash_logger()
