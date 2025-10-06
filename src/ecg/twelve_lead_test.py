@@ -1698,8 +1698,13 @@ class ECGTestPage(QWidget):
     def calculate_pr_interval(self, lead_data):
         """Calculate PR interval from P wave to QRS complex - LIVE"""
         try:
-            if len(lead_data) < 200:
-                return 160  # Fallback
+            # Early exit: no real signal → 0
+            try:
+                arr = np.asarray(lead_data, dtype=float)
+                if len(arr) < 200 or np.all(arr == 0) or np.std(arr) < 0.1:
+                    return 0
+            except Exception:
+                return 0
             
             # Apply bandpass filter to enhance R-peaks (0.5-40 Hz)
             from scipy.signal import butter, filtfilt, find_peaks
@@ -1737,15 +1742,20 @@ class ECGTestPage(QWidget):
                 if pr_intervals:
                     return int(round(np.mean(pr_intervals)))
             
-            return 160  # Fallback
+            return 0  # Fallback to 0 when not computable
         except:
-            return 160
+            return 0
 
     def calculate_qrs_duration(self, lead_data):
         """Calculate QRS complex duration - LIVE"""
         try:
-            if len(lead_data) < 200:
-                return 100  # Fallback
+            # Early exit: no real signal → 0
+            try:
+                arr = np.asarray(lead_data, dtype=float)
+                if len(arr) < 200 or np.all(arr == 0) or np.std(arr) < 0.1:
+                    return 0
+            except Exception:
+                return 0
             
             # Apply bandpass filter to enhance R-peaks (0.5-40 Hz)
             from scipy.signal import butter, filtfilt, find_peaks
@@ -1789,9 +1799,9 @@ class ECGTestPage(QWidget):
                 if qrs_durations:
                     return int(round(np.mean(qrs_durations)))
             
-            return 100  # Fallback
+            return 0  # Fallback to 0 when not computable
         except:
-            return 100
+            return 0
     
     def calculate_qrs_axis(self):
         """Calculate QRS axis from leads I and aVF"""
@@ -1813,9 +1823,14 @@ class ECGTestPage(QWidget):
     def calculate_st_interval(self, lead_data):
         """Calculate ST interval - LIVE"""
         try:
-            if len(lead_data) < 200:
-                print(f"🔍 ST: Insufficient data ({len(lead_data)} samples)")
-                return 100  # Fallback
+            # Early exit: no real signal → 0
+            try:
+                arr = np.asarray(lead_data, dtype=float)
+                if len(arr) < 200 or np.all(arr == 0) or np.std(arr) < 0.1:
+                    print(f"🔍 ST: Insufficient/flat data ({len(arr)} samples)")
+                    return 0
+            except Exception:
+                return 0
             
             # Apply bandpass filter to enhance R-peaks (0.5-40 Hz)
             from scipy.signal import butter, filtfilt, find_peaks
@@ -1890,10 +1905,10 @@ class ECGTestPage(QWidget):
                     print(f"🔍 ST: Final result {result} ms from {len(st_intervals)} intervals")
                     return result
             
-            print(f"🔍 ST: No valid intervals found, returning fallback 100 ms")
-            return 100  # Fallback
+            print(f"🔍 ST: No valid intervals found, returning 0 ms")
+            return 0  # Fallback to 0 when not computable
         except:
-            return 100
+            return 0
 
     def calculate_qtc_interval(self, heart_rate, st_interval):
         """Calculate QTc using Bazett's formula: QTc = QT / sqrt(RR)"""
