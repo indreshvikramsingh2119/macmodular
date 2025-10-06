@@ -687,6 +687,9 @@ def main():
                     
                     # Create and show dashboard with user details
                     dashboard = Dashboard(username=login.username, role=None, user_details=login.user_details)
+                    # Reset ECG test page metrics to zero on login
+                    if hasattr(dashboard, 'ecg_test_page') and dashboard.ecg_test_page:
+                        dashboard.ecg_test_page.reset_metrics_to_zero()
                     # Attach a session recorder for this user
                     try:
                         user_record = None
