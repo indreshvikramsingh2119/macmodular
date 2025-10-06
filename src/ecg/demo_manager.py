@@ -96,8 +96,9 @@ class DemoManager:
             except Exception as e:
                 print(f"[Demo Toggle] Check real run state failed: {e}")
 
-            # Demo is being turned ON
+            # Demo is being turned ON - disable hardware controls
             self.ecg_test_page.demo_toggle.setText("ON")
+            self._disable_hardware_controls()
 
             # Get current wave speed and print it
             current_speed = self.ecg_test_page.settings_manager.get_wave_speed()
@@ -147,12 +148,117 @@ class DemoManager:
             self.start_demo_data()
             
         else:
-            # Demo is being turned OFF
+            # Demo is being turned OFF - enable hardware controls
             self.ecg_test_page.demo_toggle.setText("OFF")
             print("🔴 Demo mode OFF - Stopping demo data...")
             
             # Stop demo data generation
             self.stop_demo_data()
+            self._enable_hardware_controls()
+    
+    def _disable_hardware_controls(self):
+        """Disable hardware control buttons when demo mode is ON"""
+        try:
+            if hasattr(self.ecg_test_page, 'start_btn'):
+                self.ecg_test_page.start_btn.setEnabled(False)
+                self.ecg_test_page.start_btn.setStyleSheet("""
+                    QPushButton {
+                        background: #6c757d;
+                        color: #ffffff;
+                        border: 2px solid #6c757d;
+                        border-radius: 8px;
+                        padding: 4px 8px;
+                        font-size: 10px;
+                    }
+                    QPushButton:hover {
+                        background: #5a6268;
+                    }
+                """)
+            if hasattr(self.ecg_test_page, 'stop_btn'):
+                self.ecg_test_page.stop_btn.setEnabled(False)
+                self.ecg_test_page.stop_btn.setStyleSheet("""
+                    QPushButton {
+                        background: #6c757d;
+                        color: #ffffff;
+                        border: 2px solid #6c757d;
+                        border-radius: 8px;
+                        padding: 4px 8px;
+                        font-size: 10px;
+                    }
+                    QPushButton:hover {
+                        background: #5a6268;
+                    }
+                """)
+            if hasattr(self.ecg_test_page, 'ports_btn'):
+                self.ecg_test_page.ports_btn.setEnabled(False)
+                self.ecg_test_page.ports_btn.setStyleSheet("""
+                    QPushButton {
+                        background: #6c757d;
+                        color: #ffffff;
+                        border: 2px solid #6c757d;
+                        border-radius: 8px;
+                        padding: 4px 8px;
+                        font-size: 10px;
+                    }
+                    QPushButton:hover {
+                        background: #5a6268;
+                    }
+                """)
+            print("🔒 Hardware controls disabled (Demo mode ON)")
+        except Exception as e:
+            print(f"❌ Error disabling hardware controls: {e}")
+    
+    def _enable_hardware_controls(self):
+        """Enable hardware control buttons when demo mode is OFF"""
+        try:
+            if hasattr(self.ecg_test_page, 'start_btn'):
+                self.ecg_test_page.start_btn.setEnabled(True)
+                self.ecg_test_page.start_btn.setStyleSheet("""
+                    QPushButton {
+                        background: #28a745;
+                        color: white;
+                        border: 2px solid #28a745;
+                        border-radius: 8px;
+                        padding: 4px 8px;
+                        font-size: 10px;
+                    }
+                    QPushButton:hover {
+                        background: #218838;
+                    }
+                """)
+            if hasattr(self.ecg_test_page, 'stop_btn'):
+                self.ecg_test_page.stop_btn.setEnabled(True)
+                self.ecg_test_page.stop_btn.setStyleSheet("""
+                    QPushButton {
+                        background: #28a745;
+                        color: white;
+                        border: 2px solid #28a745;
+                        border-radius: 8px;
+                        padding: 4px 8px;
+                        font-size: 10px;
+                    }
+                    QPushButton:hover {
+                        background: #218838;
+                    }
+                """)
+            if hasattr(self.ecg_test_page, 'ports_btn'):
+                self.ecg_test_page.ports_btn.setEnabled(True)
+                self.ecg_test_page.ports_btn.setStyleSheet("""
+                    QPushButton {
+                        background: #28a745;
+                        color: white;
+                        border: 2px solid #28a745;
+                        border-radius: 8px;
+                        padding: 4px 8px;
+                        font-size: 10px;
+                    }
+                    QPushButton:hover {
+                        background: #218838;
+                    }
+                """)
+            print("🔓 Hardware controls enabled (Demo mode OFF)")
+        except Exception as e:
+            print(f"❌ Error enabling hardware controls: {e}")
     
     def start_demo_data(self):
         """Start reading real ECG data from dummycsv.csv file with wave speed control"""
