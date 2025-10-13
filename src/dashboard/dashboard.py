@@ -1313,8 +1313,12 @@ class Dashboard(QWidget):
                                 print(f"🔍 Dashboard ECG metrics: {ecg_metrics}")
                             self.update_dashboard_metrics_from_ecg()
                         
-                        # Calculate and update stress level and HRV
-                        self.update_stress_and_hrv(original_data, actual_sampling_rate)
+                        # Calculate and update stress level and HRV (throttled to every 3 seconds for stability)
+                        if not hasattr(self, '_last_stress_update'):
+                            self._last_stress_update = 0
+                        if time.time() - self._last_stress_update > 3:
+                            self.update_stress_and_hrv(original_data, actual_sampling_rate)
+                            self._last_stress_update = time.time()
                         
                         # Update live conclusion every 5 seconds
                         if not hasattr(self, '_last_conclusion_update'):
@@ -1959,7 +1963,7 @@ class Dashboard(QWidget):
             # self.user_label.setText("Not signed in")
             self.sign_btn.setText("Sign In")
     def update_stress_and_hrv(self, ecg_signal, sampling_rate):
-        """Calculate and update stress level and HRV from ECG data"""
+        """Calculate and update stress level and HRV from ECG data with smoothing"""
         try:
             from scipy.signal import find_peaks
             
@@ -1982,16 +1986,28 @@ class Dashboard(QWidget):
                 
                 if len(valid_rr) >= 2:
                     # HRV: Standard deviation of R-R intervals (SDNN)
-                    hrv_ms = np.std(valid_rr)
+                    current_hrv_ms = np.std(valid_rr)
+                    
+                    # Initialize rolling average for HRV smoothing
+                    if not hasattr(self, '_hrv_history'):
+                        self._hrv_history = []
+                    
+                    # Add current HRV to history (keep last 5 values for smoothing)
+                    self._hrv_history.append(current_hrv_ms)
+                    if len(self._hrv_history) > 5:
+                        self._hrv_history.pop(0)
+                    
+                    # Use smoothed HRV value
+                    smoothed_hrv_ms = np.mean(self._hrv_history)
                     
                     # Store for conclusion generation
-                    self._current_hrv = hrv_ms
+                    self._current_hrv = smoothed_hrv_ms
                     
-                    # Stress level based on HRV
-                    if hrv_ms > 100:
+                    # Stress level based on smoothed HRV
+                    if smoothed_hrv_ms > 100:
                         stress = "Low"
                         stress_color = "#27ae60"
-                    elif hrv_ms > 50:
+                    elif smoothed_hrv_ms > 50:
                         stress = "Moderate"
                         stress_color = "#f39c12"
                     else:
@@ -2004,7 +2020,7 @@ class Dashboard(QWidget):
                         self.stress_label.setStyleSheet(f"font-size: 13px; color: {stress_color}; font-weight: bold;")
                     
                     if hasattr(self, 'hrv_label'):
-                        self.hrv_label.setText(f"Average Variability: {int(hrv_ms)}ms")
+                        self.hrv_label.setText(f"Average Variability: {int(smoothed_hrv_ms)}ms")
                         self.hrv_label.setStyleSheet("font-size: 13px; color: #666;")
         except Exception as e:
             print(f"⚠️ Error calculating stress/HRV: {e}")
