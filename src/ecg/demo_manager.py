@@ -43,6 +43,7 @@ class DemoManager:
         self._baseline_means = {}
         # Track demo start time for live time metric
         self._demo_started_at = None
+        self._demo_paused_time = None  # Track paused time for resume
         # Stop threads if the page is destroyed
         try:
             self.ecg_test_page.destroyed.connect(self._on_page_destroyed)
@@ -97,7 +98,7 @@ class DemoManager:
                 print(f"[Demo Toggle] Check real run state failed: {e}")
 
             # Demo is being turned ON - disable hardware controls
-            self.ecg_test_page.demo_toggle.setText("ON")
+            self.ecg_test_page.demo_toggle.setText("Demo Mode: ON")
             self._disable_hardware_controls()
 
             # Get current wave speed and print it
@@ -113,12 +114,8 @@ class DemoManager:
             self._demo_fixed_metrics = None
             self._running_demo = True
             
-            # Start the dashboard timer when demo begins
-            try:
-                if hasattr(self.ecg_test_page, 'parent') and hasattr(self.ecg_test_page.parent, 'start_acquisition_timer'):
-                    self.ecg_test_page.parent.start_acquisition_timer()
-            except Exception:
-                pass
+            # Don't start the dashboard timer here - it will be handled by start_demo_data()
+            # which resets _demo_started_at and the dashboard will sync via session_paused_time
             
                         # Immediately set hardcoded demo metrics on ECG test page and dashboard
             try:
@@ -131,7 +128,7 @@ class DemoManager:
                     self.ecg_test_page.metric_labels.get('st_segment', QLabel()).setText("90")
                     # QTc label may be named 'qtc_interval' depending on UI
                     if 'qtc_interval' in self.ecg_test_page.metric_labels:
-                        self.ecg_test_page.metric_labels['qtc_interval'].setText("400/430")
+                        self.ecg_test_page.metric_labels['qtc_interval'].setText("380/400")
                     print("✅ Demo metrics set on ECG test page")
                 
                 # Update dashboard metrics (same values)
@@ -143,7 +140,7 @@ class DemoManager:
                     dashboard.metric_labels.get('qrs_axis', QLabel()).setText("0°")
                     dashboard.metric_labels.get('st_interval', QLabel()).setText("90 ms")
                     if 'qtc_interval' in dashboard.metric_labels:
-                        dashboard.metric_labels['qtc_interval'].setText("400/430 ms")
+                        dashboard.metric_labels['qtc_interval'].setText("380/400 ms")
                     # Optional: reflect demo sampling rate if shown
                     dashboard.metric_labels.get('sampling_rate', QLabel()).setText("80 Hz")
                     print("✅ Demo metrics set on dashboard")
@@ -153,10 +150,34 @@ class DemoManager:
             # Start demo data generation in the existing 12-lead grid
             self.start_demo_data()
             
+            # Start the dashboard timer when demo begins (after start_demo_data sets _demo_started_at)
+            try:
+                if hasattr(self.ecg_test_page, 'parent') and hasattr(self.ecg_test_page.parent, 'start_acquisition_timer'):
+                    self.ecg_test_page.parent.start_acquisition_timer()
+            except Exception:
+                pass
+            
         else:
             # Demo is being turned OFF - enable hardware controls
-            self.ecg_test_page.demo_toggle.setText("OFF")
+            self.ecg_test_page.demo_toggle.setText("Demo Mode: OFF")
             print("🔴 Demo mode OFF - Stopping demo data...")
+            
+            # Save paused time for resume - sync with dashboard
+            if self._demo_started_at is not None:
+                self._demo_paused_time = int(time.time() - self._demo_started_at)
+                print(f"⏸️ Demo paused at {self._demo_paused_time} seconds")
+                
+                # Also update dashboard's paused time
+                try:
+                    if hasattr(self.ecg_test_page, 'parent') and hasattr(self.ecg_test_page.parent, 'session_start_time'):
+                        dashboard = self.ecg_test_page.parent
+                        if dashboard.session_start_time is not None:
+                            # Calculate elapsed time from dashboard's perspective
+                            paused_time = int(time.time() - dashboard.session_start_time)
+                            dashboard.session_paused_time = paused_time
+                            print(f"⏸️ Dashboard paused at {paused_time} seconds")
+                except Exception as e:
+                    print(f"⚠️ Could not update dashboard paused time: {e}")
             
             # Stop demo data generation
             self.stop_demo_data()
@@ -361,7 +382,18 @@ class DemoManager:
             
             # Set warmup window to avoid initial visual artifacts
             self._warmup_until = time.time() + 1.0
-            self._demo_started_at = time.time()
+            
+            # Resume from paused time or start fresh
+            if self._demo_paused_time is not None:
+                # Resume from paused time
+                # Adjust start time to account for the paused time
+                current_time = time.time()
+                self._demo_started_at = current_time - self._demo_paused_time
+                self._demo_paused_time = None  # Reset paused time
+                print(f"⏯️ Demo resumed from paused time")
+            else:
+                # Start fresh
+                self._demo_started_at = time.time()
 
             # Make an immediate plot update once after prefill for stable first frame
             try:
@@ -679,6 +711,18 @@ class DemoManager:
 
         self.demo_thread = threading.Thread(target=stream, name="ECGDemoSynthThread", daemon=True)
         self.demo_thread.start()
+
+        # Set demo start time for timer consistency
+        # Resume from paused time or start fresh
+        if self._demo_paused_time is not None:
+            # Resume from paused time
+            current_time = time.time()
+            self._demo_started_at = current_time - self._demo_paused_time
+            self._demo_paused_time = None  # Reset paused time
+            print(f"⏯️ Demo (synthetic) resumed from paused time")
+        else:
+            # Start fresh
+            self._demo_started_at = time.time()
 
         # Timer to draw plots
         self.demo_timer = QTimer(self.ecg_test_page)

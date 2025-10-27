@@ -770,6 +770,9 @@ class Dashboard(QWidget):
         
         # --- Live Session Timer ---
         self.session_start_time = None  # Will be set when demo/acquisition starts
+        self.session_total_paused_time = 0  # Track total paused duration
+        self.session_paused_at = None  # When current pause started
+        self.session_last_elapsed = 0  # Frozen elapsed time during pause
         self.session_timer = QTimer(self)
         self.session_timer.timeout.connect(self.update_session_time)
         self.session_timer.start(1000)  # Update every second
@@ -1411,7 +1414,11 @@ class Dashboard(QWidget):
                 f"{int(round(intervals['QRS']))} ms" if isinstance(intervals['QRS'], (int, float)) else str(intervals['QRS'])
             )
         # QTc label may not exist in current metrics card; update only if present
-        if 'QTc' in intervals and intervals['QTc'] is not None and 'qtc_interval' in self.metric_labels:
+        # Check for 'QTc_interval' first (demo mode sends this as "400/430")
+        if 'QTc_interval' in intervals and intervals['QTc_interval'] is not None and 'qtc_interval' in self.metric_labels:
+            # QTc_interval is already in the correct format (e.g., "400/430")
+            self.metric_labels['qtc_interval'].setText(f"{intervals['QTc_interval']} ms")
+        elif 'QTc' in intervals and intervals['QTc'] is not None and 'qtc_interval' in self.metric_labels:
             if isinstance(intervals['QTc'], (int, float)) and intervals['QTc'] >= 0:
                 self.metric_labels['qtc_interval'].setText(f"{int(round(intervals['QTc']))} ms")
             else:
@@ -1427,6 +1434,60 @@ class Dashboard(QWidget):
         # Also update the ECG test page theme if it exists
         if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'update_metrics_frame_theme'):
             self.ecg_test_page.update_metrics_frame_theme(self.dark_mode, self.medical_mode)
+    
+    def sync_dashboard_metrics_to_ecg_page(self):
+        """Sync dashboard's current metric values to ECG test page for consistency"""
+        try:
+            if not hasattr(self, 'ecg_test_page') or not self.ecg_test_page:
+                return
+                
+            if not hasattr(self.ecg_test_page, 'metric_labels'):
+                return
+                
+            # Sync metric values from dashboard to ECG test page
+            # Extract numeric values from dashboard labels (e.g., "60 BPM" -> "60")
+            if 'heart_rate' in self.metric_labels and 'heart_rate' in self.ecg_test_page.metric_labels:
+                hr_text = self.metric_labels['heart_rate'].text()
+                hr_value = hr_text.split()[0] if ' ' in hr_text else hr_text
+                self.ecg_test_page.metric_labels['heart_rate'].setText(hr_value)
+                
+            if 'pr_interval' in self.metric_labels and 'pr_interval' in self.ecg_test_page.metric_labels:
+                pr_text = self.metric_labels['pr_interval'].text()
+                pr_value = pr_text.split()[0] if ' ' in pr_text else pr_text
+                self.ecg_test_page.metric_labels['pr_interval'].setText(pr_value)
+                
+            if 'qrs_duration' in self.metric_labels and 'qrs_duration' in self.ecg_test_page.metric_labels:
+                qrs_text = self.metric_labels['qrs_duration'].text()
+                qrs_value = qrs_text.split()[0] if ' ' in qrs_text else qrs_text
+                self.ecg_test_page.metric_labels['qrs_duration'].setText(qrs_value)
+                
+            if 'qrs_axis' in self.metric_labels and 'qrs_axis' in self.ecg_test_page.metric_labels:
+                qrs_axis_text = self.metric_labels['qrs_axis'].text()
+                qrs_axis_value = qrs_axis_text.replace('°', '') if '°' in qrs_axis_text else qrs_axis_text
+                self.ecg_test_page.metric_labels['qrs_axis'].setText(f"{qrs_axis_value}°")
+                
+            if 'st_interval' in self.metric_labels and 'st_segment' in self.ecg_test_page.metric_labels:
+                st_text = self.metric_labels['st_interval'].text()
+                st_value = st_text.split()[0] if ' ' in st_text else st_text
+                self.ecg_test_page.metric_labels['st_segment'].setText(st_value)
+                
+            # Handle qtc_interval - dashboard might have "400/430 ms" format
+            if 'qtc_interval' in self.metric_labels and 'qtc_interval' in self.ecg_test_page.metric_labels:
+                qtc_text = self.metric_labels['qtc_interval'].text()
+                # Extract both QT and QTc values
+                if '/' in qtc_text:
+                    # Format: "400/430 ms" -> extract "400/430"
+                    qtc_value = qtc_text.split()[0] if ' ' in qtc_text else qtc_text
+                    self.ecg_test_page.metric_labels['qtc_interval'].setText(qtc_value)
+                else:
+                    # Single value
+                    qtc_value = qtc_text.split()[0] if ' ' in qtc_text else qtc_text
+                    self.ecg_test_page.metric_labels['qtc_interval'].setText(qtc_value)
+                    
+            print("✅ Synced dashboard metrics to ECG test page")
+            
+        except Exception as e:
+            print(f"⚠️ Error syncing dashboard metrics to ECG test page: {e}")
     
     def update_dashboard_metrics_from_ecg(self):
         """Update dashboard metrics from ECG test page data"""
@@ -2234,21 +2295,50 @@ class Dashboard(QWidget):
     def update_session_time(self):
         """Update live session timer on both dashboard and ECG test page"""
         try:
-            # Check if ECG is active (demo or hardware acquisition)
+            current_time = time.time()
+            
             if self.is_ecg_active():
-                # Auto-start timer if not started yet
+                # ECG IS active - timer is RUNNING
                 if self.session_start_time is None:
-                    self.session_start_time = time.time()
-                    print("⏱️ Session timer auto-started")
+                    # Starting fresh
+                    self.session_start_time = current_time
+                    self.session_total_paused_time = 0  # Track total paused duration
+                    self.session_paused_at = None  # When current pause started
+                    self.session_last_elapsed = 0  # Frozen elapsed time during pause
+                    print("⏱️ Session timer started")
                 
-                # Calculate elapsed time
-                elapsed = int(time.time() - self.session_start_time)
+                # Check if we're resuming from a pause
+                if self.session_paused_at is not None:
+                    # We were paused and now resuming - add the paused duration to total
+                    paused_duration = current_time - self.session_paused_at
+                    self.session_total_paused_time += paused_duration
+                    self.session_paused_at = None
+                    print(f"⏯️ Resumed - total paused: {int(self.session_total_paused_time)}s")
+                
+                # Calculate elapsed time accounting for pauses
+                elapsed = int(current_time - self.session_start_time - self.session_total_paused_time)
                 mm = elapsed // 60
                 ss = elapsed % 60
                 time_str = f"{mm:02d}:{ss:02d}"
             else:
-                # No ECG activity - show 00:00 but don't reset session_start_time
-                time_str = "00:00"
+                # ECG is NOT active - timer is PAUSED
+                if self.session_start_time is not None:
+                    # Check if we're entering pause state for the first time (session_paused_at is None)
+                    if self.session_paused_at is None:
+                        # Just started pausing - record when pause started and capture elapsed time
+                        self.session_paused_at = current_time
+                        # Capture the elapsed time at the moment of pause
+                        elapsed = int(current_time - self.session_start_time - self.session_total_paused_time)
+                        self.session_last_elapsed = elapsed  # Store frozen elapsed time
+                        print(f"⏸️ Timer paused at {elapsed}s")
+                    
+                    # Show FROZEN elapsed time (don't recalculate)
+                    mm = self.session_last_elapsed // 60
+                    ss = self.session_last_elapsed % 60
+                    time_str = f"{mm:02d}:{ss:02d}"
+                else:
+                    # No session started yet - show 00:00
+                    time_str = "00:00"
             
             # Update time on both dashboard and ECG test page for synchronization
             if 'time_elapsed' in self.metric_labels:
@@ -2263,8 +2353,21 @@ class Dashboard(QWidget):
     def start_acquisition_timer(self):
         """Start the session timer when demo or hardware acquisition begins"""
         if self.session_start_time is None:
+            # Starting fresh - never been started before
             self.session_start_time = time.time()
-            print("⏱️ Session timer started")
+            self.session_total_paused_time = 0  # Reset paused time tracking
+            self.session_paused_at = None
+            print("⏱️ Session timer started (first time)")
+        else:
+            # Resuming from pause - adjust start time to account for paused duration
+            if self.session_paused_at is not None:
+                # Add the paused duration to total paused time
+                paused_duration = time.time() - self.session_paused_at
+                self.session_total_paused_time += paused_duration
+                self.session_paused_at = None
+                print(f"⏱️ Session timer resumed (was paused for {int(paused_duration)}s)")
+            else:
+                print(f"⏱️ Session timer already running")
     
     def handle_sign_out(self):
         # User label removed per request
@@ -2288,7 +2391,9 @@ class Dashboard(QWidget):
             self.ecg_test_page.update_metrics_frame_theme(self.dark_mode, self.medical_mode)
             
         self.page_stack.setCurrentWidget(self.ecg_test_page)
-        # Update metrics when opening ECG test page
+        # Sync dashboard metrics to ECG test page
+        self.sync_dashboard_metrics_to_ecg_page()
+        # Also update dashboard metrics when opening ECG test page
         self.update_dashboard_metrics_from_ecg()
     def go_to_dashboard(self):
         self.page_stack.setCurrentWidget(self.dashboard_page)

@@ -910,6 +910,8 @@ class ECGTestPage(QWidget):
 
         # Initialize time tracking for elapsed time
         self.start_time = None
+        self.paused_at = None  # Track when pause started
+        self.paused_duration = 0  # Total cumulative paused time
         self.elapsed_timer = QTimer()
         self.elapsed_timer.timeout.connect(self.update_elapsed_time)
 
@@ -2651,9 +2653,16 @@ class ECGTestPage(QWidget):
                         child.setStyleSheet("color: #666; margin-bottom: 5px; border: none;")
 
     def update_elapsed_time(self):
-        
+        # Only update time when acquisition is running (not paused)
+        if not hasattr(self, 'serial_reader') or not self.serial_reader or not self.serial_reader.running:
+            # Acquisition is stopped/paused - don't update time
+            return
+            
         if self.start_time and 'time_elapsed' in self.metric_labels:
-            elapsed = time.time() - self.start_time
+            current_time = time.time()
+            # Subtract paused duration from elapsed time
+            paused_duration = getattr(self, 'paused_duration', 0)
+            elapsed = current_time - self.start_time - paused_duration
             minutes = int(elapsed // 60)
             seconds = int(elapsed % 60)
             self.metric_labels['time_elapsed'].setText(f"{minutes:02d}:{seconds:02d}")
@@ -3997,8 +4006,28 @@ class ECGTestPage(QWidget):
             print(f"[DEBUG] ECGTestPage - Number of plot widgets: {len(self.plot_widgets)}")
             print(f"[DEBUG] ECGTestPage - Number of data lines: {len(self.data_lines)}")
 
-            # Start elapsed time tracking
-            self.start_time = time.time()
+            # Start elapsed time tracking (resume from previous time if paused)
+            current_time = time.time()
+            if not hasattr(self, 'start_time') or self.start_time is None:
+                # First start - set start time
+                self.start_time = current_time
+                if hasattr(self, 'paused_duration'):
+                    self.paused_duration = 0
+                self.paused_at = None
+                print("⏱️ Session timer started (first time)")
+            else:
+                # Resuming from pause - accumulate paused time
+                if hasattr(self, 'paused_at') and self.paused_at is not None:
+                    # Calculate how long we were paused
+                    pause_duration = current_time - self.paused_at
+                    # Add to total paused duration
+                    if not hasattr(self, 'paused_duration') or self.paused_duration is None:
+                        self.paused_duration = 0
+                    self.paused_duration += pause_duration
+                    print(f"⏱️ Session timer resumed (was paused for {int(pause_duration)}s)")
+                    self.paused_at = None  # Clear pause timestamp
+                else:
+                    print("⏱️ Session timer resumed")
             self.elapsed_timer.start(1000)
             
         except Exception as e:
@@ -4022,9 +4051,14 @@ class ECGTestPage(QWidget):
         if hasattr(self, '_12to1_timer'):
             self._12to1_timer.stop()
 
-        # Stop elapsed time tracking
+        # Pause elapsed time tracking (keep start_time for resume)
         self.elapsed_timer.stop()
-        self.start_time = None
+        # Track when pause started (for calculating total paused time on resume)
+        if hasattr(self, 'start_time') and self.start_time is not None:
+            if not hasattr(self, 'paused_at') or self.paused_at is None:
+                self.paused_at = time.time()
+                print(f"⏸️ Timer paused")
+            # Keep start_time so we can resume from this point
 
         # --- Calculate and update metrics on dashboard ---
         if hasattr(self, 'dashboard_callback'):
