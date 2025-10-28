@@ -1157,6 +1157,12 @@ class Dashboard(QWidget):
     def update_dashboard_metrics_live(self, ecg_metrics):
         """Update dashboard metrics with live calculated values"""
         try:
+            import time as _time
+            # Throttle: update at most once every 5 seconds
+            if not hasattr(self, '_last_metrics_update_ts'):
+                self._last_metrics_update_ts = 0.0
+            if _time.time() - self._last_metrics_update_ts < 5.0:
+                return
             # Do not update metrics for first-time users until acquisition/demo starts
             if not self.is_ecg_active():
                 return
@@ -1197,6 +1203,14 @@ class Dashboard(QWidget):
             # Update Sampling Rate - Commented out
             # if 'sampling_rate' in ecg_metrics:
             #     self.metric_labels['sampling_rate'].setText(ecg_metrics['sampling_rate'])
+            # Record last update time
+            self._last_metrics_update_ts = _time.time()
+            
+            # Keep ECG test page metrics identical to dashboard
+            try:
+                self.sync_dashboard_metrics_to_ecg_page()
+            except Exception:
+                pass
             
         except Exception as e:
             print(f"Error updating live dashboard metrics: {e}")
@@ -1401,6 +1415,12 @@ class Dashboard(QWidget):
     
     
     def update_ecg_metrics(self, intervals):
+        import time as _time
+        # Throttle: update at most once every 5 seconds
+        if not hasattr(self, '_last_metrics_update_ts'):
+            self._last_metrics_update_ts = 0.0
+        if _time.time() - self._last_metrics_update_ts < 5.0:
+            return
         if 'Heart_Rate' in intervals and intervals['Heart_Rate'] is not None:
             self.metric_labels['heart_rate'].setText(
                 f"{int(round(intervals['Heart_Rate']))} bpm" if isinstance(intervals['Heart_Rate'], (int, float)) else str(intervals['Heart_Rate'])
@@ -1431,6 +1451,14 @@ class Dashboard(QWidget):
             self.metric_labels[key].setText(
                 f"{int(round(intervals['ST']))} ms" if isinstance(intervals['ST'], (int, float)) else str(intervals['ST'])
             )
+        # Record last update time
+        self._last_metrics_update_ts = _time.time()
+        
+        # Keep ECG test page metrics identical to dashboard
+        try:
+            self.sync_dashboard_metrics_to_ecg_page()
+        except Exception:
+            pass
         # Also update the ECG test page theme if it exists
         if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'update_metrics_frame_theme'):
             self.ecg_test_page.update_metrics_frame_theme(self.dark_mode, self.medical_mode)
@@ -1492,6 +1520,12 @@ class Dashboard(QWidget):
     def update_dashboard_metrics_from_ecg(self):
         """Update dashboard metrics from ECG test page data"""
         try:
+            import time as _time
+            # Throttle: update at most once every 5 seconds
+            if not hasattr(self, '_last_metrics_update_ts'):
+                self._last_metrics_update_ts = 0.0
+            if _time.time() - self._last_metrics_update_ts < 5.0:
+                return
             # Block updates for first-time users until acquisition/demo starts
             if not self.is_ecg_active():
                 return
@@ -1570,6 +1604,14 @@ class Dashboard(QWidget):
                     except Exception as rec_err:
                         # Silent fail; never block UI
                         pass
+            
+            # After updating dashboard from ECG page, keep ECG page labels in sync (formatting differences)
+            try:
+                self.sync_dashboard_metrics_to_ecg_page()
+            except Exception:
+                pass
+            # Record last update time
+            self._last_metrics_update_ts = _time.time()
                             
         except Exception as e:
             print(f"❌ Error updating dashboard metrics from ECG: {e}")

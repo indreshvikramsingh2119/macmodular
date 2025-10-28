@@ -1291,6 +1291,11 @@ class ECGTestPage(QWidget):
             if vb is not None:
                 # Prevent extreme jumps while still allowing wide physiological range
                 vb.setLimits(yMin=-8000, yMax=8000)
+                # Start with a default X range of 10 seconds
+                try:
+                    vb.setRange(xRange=(0.0, 10.0))
+                except Exception:
+                    pass
             
             # --- MAKE PLOT CLICKABLE ---
             plot_widget.scene().sigMouseClicked.connect(partial(self.plot_clicked, i))
@@ -2209,6 +2214,12 @@ class ECGTestPage(QWidget):
     def update_ecg_metrics_display(self, heart_rate, pr_interval, qrs_duration, qrs_axis, st_interval, qt_interval=None, qtc_interval=None):
         """Update the ECG metrics display in the UI"""
         try:
+            # Throttle updates to every 5 seconds to avoid fast flicker
+            import time as _time
+            if not hasattr(self, '_last_metric_update_ts'):
+                self._last_metric_update_ts = 0.0
+            if _time.time() - self._last_metric_update_ts < 5.0:
+                return
             print(f"🔍 UI Update: HR={heart_rate}, PR={pr_interval}, QRS={qrs_duration}, Axis={qrs_axis}, ST={st_interval}, QT={qt_interval}, QTc={qtc_interval}")
             
             if hasattr(self, 'metric_labels'):
@@ -2223,11 +2234,22 @@ class ECGTestPage(QWidget):
                 if 'st_interval' in self.metric_labels:
                     self.metric_labels['st_interval'].setText(f"{st_interval} ")
                 if 'qtc_interval' in self.metric_labels:
-                    # Display both QT and QTc in the same metric
+                    # Display both QT and QTc in the same metric (QT/QTc)
                     if qt_interval is not None and qtc_interval is not None:
-                        self.metric_labels['qtc_interval'].setText(f"{qt_interval}/{qtc_interval}")
+                        try:
+                            qt_i = int(round(qt_interval))
+                            qtc_i = int(round(qtc_interval))
+                            self.metric_labels['qtc_interval'].setText(f"{qt_i}/{qtc_i}")
+                        except Exception:
+                            self.metric_labels['qtc_interval'].setText(f"{qt_interval}/{qtc_interval}")
                     elif qtc_interval is not None:
-                        self.metric_labels['qtc_interval'].setText(f"{qtc_interval} ")
+                        try:
+                            qtc_i = int(round(qtc_interval))
+                            self.metric_labels['qtc_interval'].setText(f"{qtc_i} ")
+                        except Exception:
+                            self.metric_labels['qtc_interval'].setText(f"{qtc_interval} ")
+            # mark last update time
+            self._last_metric_update_ts = _time.time()
         except Exception as e:
             print(f"Error updating ECG metrics: {e}")
 
@@ -5766,31 +5788,34 @@ class ECGTestPage(QWidget):
                 
                 for i in range(len(self.leads)):
                     try:
-                        if i < len(self.data_lines):
-                            # Apply adaptive scaling to the data before plotting
-                            if i < len(self.data) and len(self.data[i]) > 0:
-                                gain_factor = self.settings_manager.get_wave_gain() / 10.0
-                                scaled_data = self.apply_adaptive_gain(self.data[i], signal_source, gain_factor)
-                                
-                                # Apply wave speed scaling to time axis (same as demo mode)
-                                n = len(scaled_data)
-                                # Use the same sampling rate as demo mode (150 Hz for CSV, 80 Hz for hardware)
-                                sampling_rate = 80.0  # Hardware sampling rate
-                                time_axis = np.arange(n, dtype=float) / sampling_rate
-                                
-                                # Scale time axis based on wave speed
-                                time_axis = time_axis * seconds_scale
-                                
-                                self.data_lines[i].setData(time_axis, scaled_data)
-                                # Use adaptive Y-range based on scaled data
-                                self.update_plot_y_range_adaptive(i, signal_source, data_override=scaled_data)
-                                
-                                # Debug wave speed effect for first few leads
-                                if i < 3 and hasattr(self, '_debug_counter') and self._debug_counter % 200 == 0:
-                                    print(f"🎛️ Serial Lead {i}: speed={wave_speed:.1f}mm/s, scale={seconds_scale:.2f}, time_range={time_axis[-1]:.2f}s")
-                            else:
-                                self.data_lines[i].setData(self.data[i])
-                                self.update_plot_y_range(i)
+                        if i >= len(self.data_lines):
+                            continue
+                        has_data = (i < len(self.data) and len(self.data[i]) > 0)
+                        if has_data:
+                            gain_factor = self.settings_manager.get_wave_gain() / 10.0
+                            scaled_data = self.apply_adaptive_gain(self.data[i], signal_source, gain_factor)
+
+                            # Build time axis and apply wave-speed scaling
+                            n = len(scaled_data)
+                            sampling_rate = 80.0
+                            time_axis = (np.arange(n, dtype=float) / sampling_rate) * seconds_scale
+
+                            # Avoid cropping: small padding and explicit x-range
+                            try:
+                                vb = self.plot_widgets[i].getViewBox()
+                                if vb is not None:
+                                    vb.setRange(xRange=(time_axis[0], time_axis[-1]))
+                            except Exception:
+                                pass
+
+                            self.data_lines[i].setData(time_axis, scaled_data)
+                            self.update_plot_y_range_adaptive(i, signal_source, data_override=scaled_data)
+
+                            if i < 3 and hasattr(self, '_debug_counter') and self._debug_counter % 200 == 0:
+                                print(f"🎛️ Serial Lead {i}: speed={wave_speed:.1f}mm/s, scale={seconds_scale:.2f}, time_range={time_axis[-1]:.2f}s")
+                        else:
+                            self.data_lines[i].setData(self.data[i] if i < len(self.data) else [])
+                            self.update_plot_y_range(i)
                     except Exception as e:
                         print(f"❌ Error updating plot {i}: {e}")
                         continue

@@ -5,7 +5,7 @@
   "sampling_mode": "Simultaneous",
   "demo_function": "Off",
   "storage": "U",
-  "serial_port": "/dev/cu.usbserial-140",
+  "serial_port": "/dev/cu.usbserial-1140",
   "baud_rate": "115200",
   "printer_analysis_result": "off",
   "printer_average_wave": "off",
