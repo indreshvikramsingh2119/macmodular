@@ -23,8 +23,8 @@ def create_ecg_grid_with_waveform(ecg_data, lead_name, width=6, height=2):
     
     # STEP 1: Create pink ECG grid background
     # ECG grid colors (even lighter pink/red like medical ECG paper)
-    light_grid_color = '#ffeeee'  # Even lighter pink for minor grid lines (was #ffe0e0)
-    major_grid_color = '#ffe0e0'  # Even lighter pink for major grid lines (was #ffcccc)
+    light_grid_color = '#ffd1d1'  # Darker minor grid
+    major_grid_color = '#ffb3b3'  # Darker major grid
     bg_color = '#ffe6e6'  # Very light pink background
     
     # Set both figure and axes background to pink
@@ -39,12 +39,12 @@ def create_ecg_grid_with_waveform(ecg_data, lead_name, width=6, height=2):
     # Draw vertical minor pink grid lines
     for i in range(61):
         x_pos = i * minor_spacing_x
-        ax.axvline(x=x_pos, color=light_grid_color, linewidth=0.2, alpha=0.4)  # Further reduced linewidth and alpha
+        ax.axvline(x=x_pos, color=light_grid_color, linewidth=0.6, alpha=0.8)
     
     # Draw horizontal minor pink grid lines
     for i in range(21):
         y_pos = i * minor_spacing_y
-        ax.axhline(y=y_pos, color=light_grid_color, linewidth=0.2, alpha=0.4)  # Further reduced linewidth and alpha
+        ax.axhline(y=y_pos, color=light_grid_color, linewidth=0.6, alpha=0.8)
     
     # Major grid lines (5mm equivalent spacing) - DARKER PINK
     major_spacing_x = width / 12  # 12 major divisions across width
@@ -53,12 +53,12 @@ def create_ecg_grid_with_waveform(ecg_data, lead_name, width=6, height=2):
     # Draw vertical major pink grid lines
     for i in range(13):
         x_pos = i * major_spacing_x
-        ax.axvline(x=x_pos, color=major_grid_color, linewidth=0.4, alpha=0.5)  # Further reduced linewidth and alpha
+        ax.axvline(x=x_pos, color=major_grid_color, linewidth=1.0, alpha=0.9)
     
     # Draw horizontal major pink grid lines
     for i in range(5):
         y_pos = i * major_spacing_y
-        ax.axhline(y=y_pos, color=major_grid_color, linewidth=0.4, alpha=0.5)  # Further reduced linewidth and alpha
+        ax.axhline(y=y_pos, color=major_grid_color, linewidth=1.0, alpha=0.9)
     
     # STEP 3: Plot DARK ECG waveform on top of pink grid
     if ecg_data is not None and len(ecg_data) > 0:
@@ -106,8 +106,8 @@ def create_reportlab_ecg_drawing(lead_name, width=460, height=45):
     drawing.add(bg_rect)
     
     # STEP 2: Draw pink ECG grid lines (even lighter colors)
-    light_grid_color = colors.HexColor("#ffeeee")  # Even lighter pink (was #ffe0e0)
-    major_grid_color = colors.HexColor("#ffe0e0")   # Even lighter pink (was #ffcccc)
+    light_grid_color = colors.HexColor("#ffd1d1")  # Darker minor grid
+    major_grid_color = colors.HexColor("#ffb3b3")   # Darker major grid
     
     # Minor grid lines (1mm spacing equivalent)
     minor_spacing_x = width / 60  # 60 divisions across width
@@ -116,13 +116,13 @@ def create_reportlab_ecg_drawing(lead_name, width=460, height=45):
     # Vertical minor grid lines
     for i in range(61):
         x_pos = i * minor_spacing_x
-        line = Line(x_pos, 0, x_pos, height, strokeColor=light_grid_color, strokeWidth=0.15)  # Further reduced strokeWidth
+        line = Line(x_pos, 0, x_pos, height, strokeColor=light_grid_color, strokeWidth=0.4)
         drawing.add(line)
     
     # Horizontal minor grid lines
     for i in range(21):
         y_pos = i * minor_spacing_y
-        line = Line(0, y_pos, width, y_pos, strokeColor=light_grid_color, strokeWidth=0.15)  # Further reduced strokeWidth
+        line = Line(0, y_pos, width, y_pos, strokeColor=light_grid_color, strokeWidth=0.4)
         drawing.add(line)
     
     # Major grid lines (5mm spacing equivalent)
@@ -132,13 +132,13 @@ def create_reportlab_ecg_drawing(lead_name, width=460, height=45):
     # Vertical major grid lines
     for i in range(13):
         x_pos = i * major_spacing_x
-        line = Line(x_pos, 0, x_pos, height, strokeColor=major_grid_color, strokeWidth=0.3)  # Further reduced strokeWidth
+        line = Line(x_pos, 0, x_pos, height, strokeColor=major_grid_color, strokeWidth=0.8)
         drawing.add(line)
     
     # Horizontal major grid lines
     for i in range(5):
         y_pos = i * major_spacing_y
-        line = Line(0, y_pos, width, y_pos, strokeColor=major_grid_color, strokeWidth=0.3)  # Further reduced strokeWidth
+        line = Line(0, y_pos, width, y_pos, strokeColor=major_grid_color, strokeWidth=0.8)
         drawing.add(line)
     
     # REMOVE ENTIRE "STEP 3: Draw ECG waveform as series of lines" section (lines ~166-214)
@@ -239,8 +239,8 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
     drawing.add(bg_rect)
     
     # STEP 2: Draw pink ECG grid lines (even lighter colors)
-    light_grid_color = colors.HexColor("#ffeeee")  # Even lighter pink (was #ffe0e0)
-    major_grid_color = colors.HexColor("#ffe0e0")   # Even lighter pink (was #ffcccc)
+    light_grid_color = colors.HexColor("#ffd1d1")  # Darker minor grid
+    major_grid_color = colors.HexColor("#ffb3b3")   # Darker major grid
     
     # Minor grid lines (1mm spacing equivalent)
     minor_spacing_x = width / 60  # 60 divisions across width
@@ -249,13 +249,13 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
     # Vertical minor grid lines
     for i in range(61):
         x_pos = i * minor_spacing_x
-        line = Line(x_pos, 0, x_pos, height, strokeColor=light_grid_color, strokeWidth=0.15)  # Further reduced strokeWidth
+        line = Line(x_pos, 0, x_pos, height, strokeColor=light_grid_color, strokeWidth=0.4)
         drawing.add(line)
     
     # Horizontal minor grid lines
     for i in range(21):
         y_pos = i * minor_spacing_y
-        line = Line(0, y_pos, width, y_pos, strokeColor=light_grid_color, strokeWidth=0.15)  # Further reduced strokeWidth
+        line = Line(0, y_pos, width, y_pos, strokeColor=light_grid_color, strokeWidth=0.4)
         drawing.add(line)
     
     # Major grid lines (5mm spacing equivalent)
@@ -265,13 +265,13 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
     # Vertical major grid lines
     for i in range(13):
         x_pos = i * major_spacing_x
-        line = Line(x_pos, 0, x_pos, height, strokeColor=major_grid_color, strokeWidth=0.3)  # Further reduced strokeWidth
+        line = Line(x_pos, 0, x_pos, height, strokeColor=major_grid_color, strokeWidth=0.8)
         drawing.add(line)
     
     # Horizontal major grid lines
     for i in range(5):
         y_pos = i * major_spacing_y
-        line = Line(0, y_pos, width, y_pos, strokeColor=major_grid_color, strokeWidth=0.3)  # Further reduced strokeWidth
+        line = Line(0, y_pos, width, y_pos, strokeColor=major_grid_color, strokeWidth=0.8)
         drawing.add(line)
     
     # STEP 3: Draw ALL AVAILABLE ECG data - NO DOWNSAMPLING, NO LIMITS!
@@ -331,9 +331,9 @@ def create_clean_ecg_image(lead_name, width=6, height=2):
     ax.patch.set_facecolor('#ffe6e6')  # FORCE axes patch pink
     ax.patch.set_alpha(1.0)  # Full opacity
     
-    # STEP 2: Draw pink ECG grid lines OVER pink background (even lighter colors)
-    light_grid_color = '#ffeeee'  # Even lighter pink for minor grid lines (was #ffe0e0)
-    major_grid_color = '#ffe0e0'  # Even lighter pink for major grid lines (was #ffcccc)
+    # STEP 2: Draw pink ECG grid lines OVER pink background (darker for clarity)
+    light_grid_color = '#ffd1d1'  # Darker minor grid
+    major_grid_color = '#ffb3b3'  # Darker major grid
     
     # Minor grid lines (1mm equivalent spacing)
     minor_spacing_x = width / 60  # 60 minor divisions
@@ -342,12 +342,12 @@ def create_clean_ecg_image(lead_name, width=6, height=2):
     # Draw vertical minor pink grid lines
     for i in range(61):
         x_pos = i * minor_spacing_x
-        ax.axvline(x=x_pos, color=light_grid_color, linewidth=0.2, alpha=0.4)  # Further reduced linewidth and alpha
+        ax.axvline(x=x_pos, color=light_grid_color, linewidth=0.6, alpha=0.8)
     
     # Draw horizontal minor pink grid lines
     for i in range(21):
         y_pos = i * minor_spacing_y
-        ax.axhline(y=y_pos, color=light_grid_color, linewidth=0.2, alpha=0.4)  # Further reduced linewidth and alpha
+        ax.axhline(y=y_pos, color=light_grid_color, linewidth=0.6, alpha=0.8)
     
     # Major grid lines (5mm equivalent spacing)
     major_spacing_x = width / 12  # 12 major divisions
@@ -356,12 +356,12 @@ def create_clean_ecg_image(lead_name, width=6, height=2):
     # Draw vertical major pink grid lines
     for i in range(13):
         x_pos = i * major_spacing_x
-        ax.axvline(x=x_pos, color=major_grid_color, linewidth=0.4, alpha=0.5)  # Further reduced linewidth and alpha
+        ax.axvline(x=x_pos, color=major_grid_color, linewidth=1.0, alpha=0.9)
     
     # Draw horizontal major pink grid lines
     for i in range(5):
         y_pos = i * major_spacing_y
-        ax.axhline(y=y_pos, color=major_grid_color, linewidth=0.4, alpha=0.5)  # Further reduced linewidth and alpha
+        ax.axhline(y=y_pos, color=major_grid_color, linewidth=1.0, alpha=0.9)
     
     # REMOVE ENTIRE "STEP 3: Create realistic ECG waveform" section (lines ~315-356)
     # REMOVE ENTIRE "STEP 4: Plot DARK ECG line" section
@@ -619,8 +619,16 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         bold=True
     )
 
-    # Title
-    story.append(Paragraph("<b>ECG Report</b>", heading))
+    # Title (switch based on demo mode)
+    is_demo = False
+    try:
+        if ecg_test_page and hasattr(ecg_test_page, 'demo_toggle'):
+            is_demo = bool(ecg_test_page.demo_toggle.isChecked())
+    except Exception:
+        pass
+
+    title_text = "Demo ECG Report" if is_demo else "ECG Report"
+    story.append(Paragraph(f"<b>{title_text}</b>", heading))
     story.append(Spacer(1, 12))
 
 
@@ -785,6 +793,9 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     gender = patient.get("gender", "")
     date_time_str = patient.get("date_time", "")
 
+    # Push the first row on Page 2 a bit lower (affects Name/HR/ST row)
+    story.append(Spacer(1, 14))
+
     # Make text clearly visible on pink background WITHOUT any background
     mini_label_style = ParagraphStyle(
         'MiniLabel',
@@ -829,36 +840,37 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     # story.append(Paragraph(f"Gender: {gender}", left_info_style))
     # story.append(Spacer(1, 15))  # Increased from 8 to 15 for more gap after Gender
 
-    # RIGHT SIDE: Date/Time positioned for right side
-    # Date/Time in column format (right aligned at top)
-    date_time_style = ParagraphStyle(
-        'DateTimeStyle',
+    # RIGHT SIDE: Date/Time - keep block at right edge, align text inside left
+    date_time_text_style = ParagraphStyle(
+        'DateTimeLeft',
         fontSize=12,
-        fontName='Helvetica',  # Remove Bold
+        fontName='Helvetica',
         textColor=colors.black,
-        alignment=2,  # Right alignment
-        spaceAfter=4,  # Reduced spacing
+        alignment=0,   # left inside the cell
+        spaceAfter=0,
     )
 
-    # Split date and time into separate paragraphs for column format
     if date_time_str:
-        date_part = date_time_str.split()[0] if date_time_str.split() else ""
-        time_part = date_time_str.split()[1] if len(date_time_str.split()) > 1 else ""
-        
-        # Date paragraph
-        date_para = Paragraph(f"Date: {date_part}", date_time_style)
-        story.append(date_para)
-        
-        # Time paragraph  
-        time_para = Paragraph(f"Time: {time_part}", date_time_style)
-        story.append(time_para)
+        parts = date_time_str.split()
+        date_part = parts[0] if parts else ""
+        time_part = parts[1] if len(parts) > 1 else ""
     else:
-        # Fallback if no date_time_str
-        date_para = Paragraph("Date: ____", date_time_style)
-        story.append(date_para)
-        time_para = Paragraph("Time: ____", date_time_style)
-        story.append(time_para)
-    
+        date_part, time_part = "____", "____"
+
+    date_para = Paragraph(f"Date: {date_part}", date_time_text_style)
+    time_para = Paragraph(f"Time: {time_part}", date_time_text_style)
+
+    # Single-column, two-row table positioned to the right of the frame
+    date_time_table = Table([[date_para], [time_para]], colWidths=[120])
+    date_time_table.hAlign = 'RIGHT'  # place the whole table at right edge
+    date_time_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    story.append(date_time_table)
     story.append(Spacer(1, 8))
 
     
@@ -1076,35 +1088,36 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     # DYNAMIC RR interval calculation from heart rate (instead of hard-coded 857)
     RR = int(60000 / HR) if HR and HR > 0 else 0  # RR interval in ms from heart rate
    
-    # Add vital parameters SHIFTED LEFT at same Y levels with REDUCED GAP
-    hr_label = String(130, 670, f"HR  : {HR} bpm", 
+    # Add vital parameters in TWO COLUMNS
+    # FIRST COLUMN (Left side - x=130)
+    hr_label = String(130, 670, f"HR    : {HR} bpm", 
                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(hr_label)
 
-    qt_label = String(280, 670, f"QT  : {QT} ms", 
-                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(qt_label)
-
-    pr_label = String(130, 650, f"PR  : {PR} ms", 
+    pr_label = String(130, 650, f"PR    : {PR} ms", 
                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(pr_label)
 
-    qtc_label = String(280, 650, f"QTc: {QTc} ms", 
+    qrs_label = String(130, 630, f"QRS : {QRS} ms", 
+                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    master_drawing.add(qrs_label)
+    
+    rr_label = String(130, 612, f"RR    : {RR} ms", 
+                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    master_drawing.add(rr_label)
+
+    qt_label = String(130, 594, f"QT    : {QT} ms", 
+                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    master_drawing.add(qt_label)
+
+    qtc_label = String(130, 576, f"QTc  : {QTc} ms", 
                       fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtc_label)
 
-    qrs_label = String(130, 630, f"QRS: {QRS} ms", 
-                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(qrs_label)
-
-    st_label = String(280, 630, f"ST  : {ST} ms", 
+    # SECOND COLUMN (Right side - x=240)
+    st_label = String(240, 594, f"ST            : {ST} ms", 
                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(st_label)
-    
-    # DYNAMIC RR interval (calculated from HR instead of hard-coded)
-    rr_label = String(130, 612, f"RR  : {RR} ms", 
-                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(rr_label)
 
     # CALCULATED wave amplitudes and lead-specific measurements
     # Prefer values passed in data; if missing/zero, compute from live ecg_test_page data (last 10s)
@@ -1181,7 +1194,8 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     
     print(f"   Converted to mm: P={p_mm}, QRS={qrs_mm}, T={t_mm}")
     
-    p_qrs_label = String(130, 596, f"P/QRS/T = {p_mm}/{qrs_mm}/{t_mm}", 
+    # SECOND COLUMN - P/QRS/T
+    p_qrs_label = String(240, 670, f"P/QRS/T  : {p_mm}/{qrs_mm}/{t_mm}", 
                          fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(p_qrs_label)
 
@@ -1238,18 +1252,21 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     
     print(f"   Converted to mV: RV5={rv5_mv:.3f}, SV1={sv1_mv:.3f}")
     
-    rv5_sv_label = String(130, 580, f"RV5/SV1 = {rv5_mv:.3f}/{sv1_mv:.3f}", 
+    # SECOND COLUMN - RV5/SV1
+    rv5_sv_label = String(240, 650, f"RV5/SV1  : {rv5_mv:.3f}/{sv1_mv:.3f}", 
                           fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv_label)
 
     # Calculate RV5+SV1 sum
     rv5_sv1_sum = rv5_mv + sv1_mv
     
-    rv5_sv1_sum_label = String(280, 612, f"RV5+SV1 = {rv5_sv1_sum:.3f}", 
+    # SECOND COLUMN - RV5+SV1
+    rv5_sv1_sum_label = String(240, 630, f"RV5+SV1 : {rv5_sv1_sum:.3f}", 
                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv1_sum_label)
 
-    qtcf_label = String(280, 596, "QTCF = 0.049", 
+    # SECOND COLUMN - QTCF
+    qtcf_label = String(240, 612, "QTCF       : 0.049", 
                         fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtcf_label)
 
@@ -1293,7 +1310,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     # Create a rectangular box for conclusions (shifted right) - INCREASED HEIGHT
     from reportlab.graphics.shapes import Rect
     conclusion_box = Rect(200, conclusion_y_start - 45, 340, 65,  # INCREASED height from 55 to 65, bottom from -35 to -40
-                         fillColor=None, strokeColor=colors.black, strokeWidth=1)
+                         fillColor=None, strokeColor=colors.black, strokeWidth=1.5)
     master_drawing.add(conclusion_box)
     
     # CENTERED and STYLISH "Conclusion" header - DYNAMIC
@@ -1421,14 +1438,14 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
             canvas.setFillColor(colors.HexColor("#ffe6e6"))
             canvas.rect(0, 0, page_width, page_height, fill=1, stroke=0)
             
-            # ECG grid colors - SAME as existing
-            light_grid_color = colors.HexColor("#ffeeee")  
+            # ECG grid colors - darker for better visibility
+            light_grid_color = colors.HexColor("#ffd1d1")  
             
-            major_grid_color = colors.HexColor("#ffe0e0")   
+            major_grid_color = colors.HexColor("#ffb3b3")   
             
             # Draw minor grid lines (1mm spacing) - FULL PAGE
             canvas.setStrokeColor(light_grid_color)
-            canvas.setLineWidth(0.3)
+            canvas.setLineWidth(0.6)
             
             minor_spacing = 1 * mm
             
@@ -1446,7 +1463,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
             
             # Draw major grid lines (5mm spacing) - FULL PAGE
             canvas.setStrokeColor(major_grid_color)
-            canvas.setLineWidth(0.8)
+            canvas.setLineWidth(1.2)
             
             major_spacing = 5 * mm
             
@@ -1500,6 +1517,93 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         y = 10  # 20 points from bottom
         canvas.drawString(x, y, footer_text)
         canvas.restoreState()
+
+    # Save parameters to a JSON index for later reuse
+    try:
+        from datetime import datetime
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        reports_dir = os.path.join(base_dir, 'reports')
+        os.makedirs(reports_dir, exist_ok=True)
+        index_path = os.path.join(reports_dir, 'index.json')
+        metrics_path = os.path.join(reports_dir, 'metrics.json')
+
+        params_entry = {
+            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "file": os.path.abspath(filename),
+            "patient": {
+                "name": full_name,
+                "age": str(age),
+                "gender": gender,
+                "date_time": date_time_str,
+            },
+            "metrics": {
+                "HR_bpm": HR,
+                "PR_ms": PR,
+                "QRS_ms": QRS,
+                "QT_ms": QT,
+                "QTc_ms": QTc,
+                "ST_ms": ST,
+                "RR_ms": RR,
+                "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
+                "P_QRS_T_mm": [p_mm, qrs_mm, t_mm],
+                "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)],
+                "QTCF": 0.049,
+            }
+        }
+
+        existing_list = []
+        if os.path.exists(index_path):
+            try:
+                with open(index_path, 'r') as f:
+                    existing_json = json.load(f)
+                    if isinstance(existing_json, list):
+                        existing_list = existing_json
+                    elif isinstance(existing_json, dict) and isinstance(existing_json.get('entries'), list):
+                        existing_list = existing_json['entries']
+            except Exception:
+                existing_list = []
+
+        existing_list.append(params_entry)
+
+        # Persist as a flat list for simplicity
+        with open(index_path, 'w') as f:
+            json.dump(existing_list, f, indent=2)
+        print(f"✓ Saved parameters to {index_path}")
+
+        # Save ONLY the 11 metrics in a lightweight separate JSON file (append to list)
+        metrics_entry = {
+            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "file": os.path.abspath(filename),
+            "HR_bpm": HR,
+            "PR_ms": PR,
+            "QRS_ms": QRS,
+            "QT_ms": QT,
+            "QTc_ms": QTc,
+            "ST_ms": ST,
+            "RR_ms": RR,
+            "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
+            "P_QRS_T_mm": [p_mm, qrs_mm, t_mm],
+            "QTCF": 0.049,
+            "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)]
+        }
+
+        metrics_list = []
+        if os.path.exists(metrics_path):
+            try:
+                with open(metrics_path, 'r') as f:
+                    mj = json.load(f)
+                    if isinstance(mj, list):
+                        metrics_list = mj
+            except Exception:
+                metrics_list = []
+
+        metrics_list.append(metrics_entry)
+
+        with open(metrics_path, 'w') as f:
+            json.dump(metrics_list, f, indent=2)
+        print(f"✓ Saved 11 metrics to {metrics_path}")
+    except Exception as e:
+        print(f"⚠️ Could not save parameters JSON: {e}")
 
     # Build PDF
     doc.build(story, onFirstPage=_draw_logo_and_footer, onLaterPages=_draw_logo_and_footer)

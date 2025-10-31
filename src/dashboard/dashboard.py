@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QGridLayout, QCalendarWidget, QTextEdit,
-    QDialog, QLineEdit, QComboBox, QFormLayout, QMessageBox, QSizePolicy, QStackedWidget, QScrollArea, QSpacerItem
+    QDialog, QLineEdit, QComboBox, QFormLayout, QMessageBox, QSizePolicy, QStackedWidget, QScrollArea, QSpacerItem, QSlider
 )
 from PyQt5.QtGui import QFont, QPixmap, QMovie
 from PyQt5.QtCore import Qt, QTimer, QSize
@@ -707,8 +707,53 @@ class Dashboard(QWidget):
         """)
         
         issue_layout.addWidget(self.conclusion_box)
-        
+        # Small footer box below the conclusion (~3 cm height)
+        self.conclusion_footer = QFrame()
+        self.conclusion_footer.setStyleSheet("background: #f7f7f7; border: none; border-radius: 10px;")
+        self.conclusion_footer.setFixedHeight(115)
+        self.conclusion_footer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        _footer_layout = QHBoxLayout(self.conclusion_footer)
+        _footer_layout.setContentsMargins(10, 8, 10, 8)
+        _footer_layout.addWidget(QLabel(""))
+        issue_layout.addWidget(self.conclusion_footer)
+
         grid.addWidget(issue_card, 2, 1, 1, 1)
+
+        # Separate card for Additional Notes (outside Conclusion)
+        notes_card = QFrame()
+        notes_card.setStyleSheet("background: white; border-radius: 16px;")
+        notes_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        notes_card.setFixedHeight(160)
+        notes_layout = QVBoxLayout(notes_card)
+        notes_layout.setContentsMargins(12, 12, 12, 12)
+        notes_layout.setSpacing(8)
+        notes_title = QLabel("METRICS")
+        notes_title.setFont(QFont("Arial", 14, QFont.Bold))
+        notes_title.setStyleSheet("color: #ff6600;")
+        notes_layout.addWidget(notes_title)
+        self.parameters_text = QTextEdit()
+        self.parameters_text.setReadOnly(True)
+        self.parameters_text.setFixedHeight(90)
+        self.parameters_text.setLineWrapMode(QTextEdit.NoWrap)  # Single row, no wrap
+        self.parameters_text.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # Hide horizontal scroll
+        self.parameters_text.setStyleSheet("background: #f9f9f9; border: none; font-size: 12px; padding: 6px 8px;")
+        notes_layout.addWidget(self.parameters_text)
+        # Slider to control horizontal scroll for parameters_text
+        self.parameters_slider = QSlider(Qt.Horizontal)
+        self.parameters_slider.setMinimum(0)
+        self.parameters_slider.setMaximum(0)
+        self.parameters_slider.setSingleStep(20)
+        self.parameters_slider.setPageStep(self.parameters_text.viewport().width())
+        self.parameters_slider.setStyleSheet("QSlider::groove:horizontal { height: 6px; background: #ececec; border-radius: 3px; } QSlider::handle:horizontal { background: #ff6600; width: 14px; border-radius: 7px; margin: -5px 0; } QSlider::sub-page:horizontal { background: #ffd5b3; border-radius: 3px; }")
+        notes_layout.addWidget(self.parameters_slider)
+
+        # Sync slider with the hidden horizontal scrollbar
+        _hbar = self.parameters_text.horizontalScrollBar()
+        _hbar.rangeChanged.connect(lambda _min, _max: self.parameters_slider.setMaximum(_max))
+        _hbar.valueChanged.connect(self.parameters_slider.setValue)
+        self.parameters_slider.valueChanged.connect(_hbar.setValue)
+        # Make the Additional Notes card span all 3 columns (full row width)
+        grid.addWidget(notes_card, 3, 0, 1, 3)
 
         # --- Recent Reports Card ---
         reports_card = QFrame()
@@ -985,16 +1030,86 @@ class Dashboard(QWidget):
             entries = [e for e in entries if str(e.get('date','')).strip() == fd]
 
         for e in entries[:10]:
+            # Build row with hover/touch feedback
             row = QHBoxLayout()
+            row.setContentsMargins(6, 6, 6, 6)
+
             meta = QLabel(f"{e.get('date','')} {e.get('time','')}  |  {e.get('patient','')}  |  {e.get('title','Report')}")
             meta.setStyleSheet("color: #333333; font-size: 12px;")
+            meta.setCursor(Qt.PointingHandCursor)
             row.addWidget(meta, 1)
+
+            path = os.path.join(reports_dir, e.get('filename',''))
+
+            # Clicking will be bound after container is created to allow row selection
+
+            # "Params" button to load metrics into Parameters box
+            # params_btn = QPushButton("Params")
+            # params_btn.setStyleSheet("background: #eeeeee; color: #333333; border-radius: 8px; padding: 4px 10px; font-weight: bold;")
+            # params_btn.clicked.connect(lambda _, p=path: self.load_metrics_into_parameters(p))
+            # row.addWidget(params_btn)
+
+            # "Open" button strictly opens the PDF
             btn = QPushButton("Open")
             btn.setStyleSheet("background: #ff6600; color: white; border-radius: 8px; padding: 4px 10px; font-weight: bold;")
-            path = os.path.join(reports_dir, e.get('filename',''))
             btn.clicked.connect(lambda _, p=path: self.open_report_file(p))
             row.addWidget(btn)
-            cont = QWidget(); cont.setLayout(row)
+
+            # Container with hover feedback and full-row click
+            cont = QWidget()
+            cont.setLayout(row)
+            cont.setCursor(Qt.PointingHandCursor)
+            cont.setStyleSheet("background: transparent; border-radius: 8px;")
+            cont._meta_label = meta
+            cont._report_path = path
+
+            # Make label click select row and load parameters
+            def _label_click_handler(_evt, p=path, w=cont):
+                try:
+                    self._select_report_row(w, p)
+                except Exception:
+                    pass
+                self.load_metrics_into_parameters(p)
+            meta.mousePressEvent = _label_click_handler
+
+            # Make entire row clickable to select and load parameters
+            def _row_click_handler(_evt, p=path, w=cont):
+                try:
+                    self._select_report_row(w, p)
+                except Exception:
+                    pass
+                self.load_metrics_into_parameters(p)
+            cont.mousePressEvent = _row_click_handler
+
+            # Hover effects (enter/leave)
+            def _hover_enter(_e, w=cont, m=meta):
+                # Keep selected style if this row is selected
+                if getattr(self, '_selected_report_widget', None) is w:
+                    w.setStyleSheet("background: #ffe6cc; border-radius: 8px; border: 1px solid #ffb366;")
+                    m.setStyleSheet("color: #333333; font-size: 12px;")
+                else:
+                    w.setStyleSheet("background: #fff3e6; border-radius: 8px;")
+                    m.setStyleSheet("color: #333333; font-size: 12px; text-decoration: underline;")
+
+            def _hover_leave(_e, w=cont, m=meta):
+                # If selected, maintain selection; else clear
+                if getattr(self, '_selected_report_widget', None) is w:
+                    w.setStyleSheet("background: #ffe6cc; border-radius: 8px; border: 1px solid #ffb366;")
+                    m.setStyleSheet("color: #333333; font-size: 12px;")
+                else:
+                    w.setStyleSheet("background: transparent; border-radius: 8px;")
+                    m.setStyleSheet("color: #333333; font-size: 12px;")
+
+            cont.enterEvent = _hover_enter
+            cont.leaveEvent = _hover_leave
+
+            # Preserve selected row highlight on UI refresh
+            try:
+                if getattr(self, '_selected_report_path', None) and os.path.abspath(path) == os.path.abspath(self._selected_report_path):
+                    self._select_report_row(cont, path)
+            except Exception:
+                pass
+
             self.reports_list_layout.addWidget(cont)
 
         spacer = QWidget(); spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -1010,6 +1125,106 @@ class Dashboard(QWidget):
             subprocess.call(['xdg-open', path])
         elif sys.platform.startswith('win'):
             os.startfile(path)
+
+    def _select_report_row(self, widget, path):
+        """Select a Recent Reports row and keep it highlighted until another is clicked."""
+        try:
+            # Clear previous selection if different
+            prev = getattr(self, '_selected_report_widget', None)
+            if prev is not None and prev is not widget:
+                try:
+                    prev.setStyleSheet("background: transparent; border-radius: 8px;")
+                    if hasattr(prev, '_meta_label') and prev._meta_label is not None:
+                        prev._meta_label.setStyleSheet("color: #333333; font-size: 12px;")
+                except Exception:
+                    pass
+
+            # Apply selection style to current widget
+            if widget is not None:
+                widget.setStyleSheet("background: #ffe6cc; border-radius: 8px; border: 1px solid #ffb366;")
+                if hasattr(widget, '_meta_label') and widget._meta_label is not None:
+                    widget._meta_label.setStyleSheet("color: #333333; font-size: 12px;")
+
+            # Save selection state
+            self._selected_report_widget = widget
+            self._selected_report_path = path
+        except Exception:
+            pass
+
+    def load_metrics_into_parameters(self, report_path: str):
+        import os, json
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        reports_dir = os.path.join(base_dir, "..", "reports")
+        metrics_path = os.path.join(reports_dir, "metrics.json")
+
+        line = "No metrics found for this report."
+        try:
+            if os.path.exists(metrics_path):
+                with open(metrics_path, "r") as f:
+                    items = json.load(f) or []
+                report_abs = os.path.abspath(report_path)
+                report_name = os.path.basename(report_abs)
+                # Try absolute path match first
+                matches = [m for m in items if os.path.abspath(m.get("file", "")) == report_abs]
+                # Fallback: match by filename only (handles reports generated in other folders like Downloads)
+                if not matches:
+                    matches = [m for m in items if os.path.basename(m.get("file", "")) == report_name]
+                if matches:
+                    m = matches[-1]
+                    hr   = m.get("HR_bpm", "--")
+                    pr   = m.get("PR_ms", "--")
+                    qrs  = m.get("QRS_ms", "--")
+                    qt   = m.get("QT_ms", "--")
+                    qtc  = m.get("QTc_ms", "--")
+                    st   = m.get("ST_ms", "--")
+                    rr   = m.get("RR_ms", "--")
+                    rv5p = m.get("RV5_plus_SV1_mV", "--")
+                    pqt  = m.get("P_QRS_T_mm", ["--", "--", "--"])
+                    qtcF = m.get("QTCF", "--")
+                    rv5s = m.get("RV5_SV1_mV", ["--", "--"])
+
+                    # Build vertical stacks (label top, value bottom) to match top metrics layout
+                    metrics = [
+                        ("HR", f"{hr} BPM"),
+                        ("PR", f"{pr} ms"),
+                        ("QRS Complex", f"{qrs} ms"),
+                        ("QT", f"{qt} ms"),
+                        ("QTc", f"{qtc} ms"),
+                        ("ST", f"{st} ms"),
+                        ("RR", f"{rr} ms"),
+                        ("RV5+SV1", f"{rv5p} mV"),
+                        ("P/QRS/T", f"{pqt[0]}/{pqt[1]}/{pqt[2]} mm"),
+                        ("QTCF", f"{qtcF}"),
+                        ("RV5/SV1", f"{rv5s[0]}/{rv5s[1]} mV"),
+                    ]
+
+                    # Render as a tight 11-column table (label top, value bottom) to ensure one-row layout
+                    labels_row = []
+
+                    values_row = []
+                    for label, value in metrics:
+                        labels_row.append(
+                            f"<td style='width:8%; padding:6px 82px; text-align:center; white-space:nowrap; color:#ff6600; font-size:15px; font-weight:900; letter-spacing:0.2px;'>{label}</td>"
+                        )
+                        values_row.append(
+                            f"<td style='width:8%; padding:4px 16px 8px; text-align:center; white-space:nowrap; color:#222222; font-size:14px; font-weight:800;'>{value}</td>"
+                        )
+                    table_html = (
+                        "<table style='width:100%; border-collapse:collapse; table-layout:fixed;'>"
+                        + "<tr>" + "".join(labels_row) + "</tr>"
+                        + "<tr>" + "".join(values_row) + "</tr>"
+                        + "</table>"
+                    )
+                    line = table_html
+        except Exception as e:
+            print(f"Failed to read metrics.json: {e}")
+
+        if hasattr(self, "parameters_text"):
+            # If HTML built, render as HTML; else plain text
+            if line.startswith("<table") or line.startswith("<div"):
+                self.parameters_text.setHtml(line)
+            else:
+                self.parameters_text.setPlainText(line)
 
     def is_ecg_active(self):
         """Return True if demo is ON or serial acquisition is running."""
