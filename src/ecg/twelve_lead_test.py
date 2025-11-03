@@ -5796,15 +5796,26 @@ class ECGTestPage(QWidget):
                             scaled_data = self.apply_adaptive_gain(self.data[i], signal_source, gain_factor)
 
                             # Build time axis and apply wave-speed scaling
+                            sampling_rate = 80.0  # Hardware sampling rate
+                            
+                            # Calculate how many samples to show based on wave speed
+                            # 25 mm/s → 10s window
+                            # 12.5 mm/s → 20s window (show more data, compressed)
+                            # 50 mm/s → 5s window (show less data, stretched)
+                            samples_to_show = int(sampling_rate * seconds_to_show)
+                            
+                            # Take only the most recent samples_to_show from the buffer
+                            if len(scaled_data) > samples_to_show:
+                                scaled_data = scaled_data[-samples_to_show:]
+                            
                             n = len(scaled_data)
-                            sampling_rate = 80.0
-                            time_axis = (np.arange(n, dtype=float) / sampling_rate) * seconds_scale
+                            time_axis = np.arange(n, dtype=float) / sampling_rate
 
                             # Avoid cropping: small padding and explicit x-range
                             try:
                                 vb = self.plot_widgets[i].getViewBox()
                                 if vb is not None:
-                                    vb.setRange(xRange=(time_axis[0], time_axis[-1]))
+                                    vb.setRange(xRange=(time_axis[0], time_axis[-1]), padding=0)
                             except Exception:
                                 pass
 

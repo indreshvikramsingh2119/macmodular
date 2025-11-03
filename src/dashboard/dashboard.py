@@ -1153,24 +1153,59 @@ class Dashboard(QWidget):
 
     def load_metrics_into_parameters(self, report_path: str):
         import os, json
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        reports_dir = os.path.join(base_dir, "..", "reports")
-        metrics_path = os.path.join(reports_dir, "metrics.json")
-
+        
         line = "No metrics found for this report."
         try:
-            if os.path.exists(metrics_path):
-                with open(metrics_path, "r") as f:
-                    items = json.load(f) or []
-                report_abs = os.path.abspath(report_path)
-                report_name = os.path.basename(report_abs)
-                # Try absolute path match first
-                matches = [m for m in items if os.path.abspath(m.get("file", "")) == report_abs]
-                # Fallback: match by filename only (handles reports generated in other folders like Downloads)
-                if not matches:
-                    matches = [m for m in items if os.path.basename(m.get("file", "")) == report_name]
-                if matches:
-                    m = matches[-1]
+            # First try: look for JSON twin (ECG_Report_YYYYMMDD_HHMMSS.json next to .pdf)
+            json_path = os.path.splitext(report_path)[0] + ".json"
+            
+            if os.path.exists(json_path):
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    
+                # Extract metrics from JSON twin format
+                metrics_data = data.get('metrics', {})
+                patient = data.get('patient', {})
+                user = data.get('user', {})
+                
+                if metrics_data:
+                    m = {
+                        'HR_bpm': metrics_data.get('heart_rate', '--'),
+                        'PR_ms': metrics_data.get('pr_interval', '--'),
+                        'QRS_ms': metrics_data.get('qrs_duration', '--'),
+                        'QT_ms': metrics_data.get('qt_interval', '--'),
+                        'QTc_ms': metrics_data.get('qtc_interval', '--'),
+                        'ST_ms': metrics_data.get('st_interval', '--'),
+                        'RR_ms': metrics_data.get('rr_interval', '--'),
+                        'RV5_plus_SV1_mV': metrics_data.get('rv5_sv1', '--'),
+                        'P_QRS_T_mm': ['--', '--', '--'],  # Placeholder
+                        'QTCF': '--',
+                        'RV5_SV1_mV': ['--', '--'],
+                    }
+            else:
+                # Fallback: look in old-style metrics.json
+                base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+                reports_dir = os.path.join(base_dir, "..", "reports")
+                metrics_path = os.path.join(reports_dir, "metrics.json")
+                
+                if os.path.exists(metrics_path):
+                    with open(metrics_path, "r") as f:
+                        items = json.load(f) or []
+                    report_abs = os.path.abspath(report_path)
+                    report_name = os.path.basename(report_abs)
+                    # Try absolute path match first
+                    matches = [m for m in items if os.path.abspath(m.get("file", "")) == report_abs]
+                    # Fallback: match by filename only
+                    if not matches:
+                        matches = [m for m in items if os.path.basename(m.get("file", "")) == report_name]
+                    if matches:
+                        m = matches[-1]
+                    else:
+                        raise ValueError("No matching report in metrics.json")
+                else:
+                    raise ValueError("No metrics.json or JSON twin found")
+            
+            if m:
                     hr   = m.get("HR_bpm", "--")
                     pr   = m.get("PR_ms", "--")
                     qrs  = m.get("QRS_ms", "--")
@@ -1217,7 +1252,9 @@ class Dashboard(QWidget):
                     )
                     line = table_html
         except Exception as e:
-            print(f"Failed to read metrics.json: {e}")
+            print(f"Failed to read metrics for report: {e}")
+            import traceback
+            traceback.print_exc()
 
         if hasattr(self, "parameters_text"):
             # If HTML built, render as HTML; else plain text
@@ -1225,6 +1262,123 @@ class Dashboard(QWidget):
                 self.parameters_text.setHtml(line)
             else:
                 self.parameters_text.setPlainText(line)
+
+    def update_live_metrics_panel(self):
+        """Update METRICS panel with live data from ECG test page (if not viewing a report)"""
+        try:
+            # If user is viewing a specific report, don't override with live data
+            if getattr(self, '_viewing_report', False):
+                return
+            
+            # Check if ECG test page exists and has data
+            if not hasattr(self, 'ecg_test_page') or not self.ecg_test_page:
+                return
+            
+            # Get current metrics from metric labels (top cards)
+            if not hasattr(self, 'metric_labels') or not self.metric_labels:
+                # Show "Waiting for ECG data..." if no metrics yet
+                if hasattr(self, 'parameters_text'):
+                    self.parameters_text.setHtml(
+                        "<div style='text-align:center; padding:20px; color:#666; font-size:14px;'>"
+                        "📊 <b>LIVE METRICS</b><br><br>Waiting for ECG data...<br>"
+                        "<small>Start ECG acquisition or demo mode to see real-time metrics</small>"
+                        "</div>"
+                    )
+                return
+            
+            # Extract metrics from metric labels
+            hr = self.metric_labels.get('heart_rate', QLabel()).text().replace(' ', '').replace('BPM', '') or '--'
+            pr = self.metric_labels.get('pr_interval', QLabel()).text().replace(' ', '').replace('ms', '') or '--'
+            qrs = self.metric_labels.get('qrs_duration', QLabel()).text().replace(' ', '').replace('ms', '') or '--'
+            qrs_axis = self.metric_labels.get('qrs_axis', QLabel()).text().replace('°', '') or '--'
+            st = self.metric_labels.get('st_interval', QLabel()).text().replace(' ', '').replace('ms', '') or '--'
+            qtc_raw = self.metric_labels.get('qtc_interval', QLabel()).text() or '--/--'
+            
+            # Parse QT/QTc
+            if '/' in qtc_raw:
+                qt, qtc = qtc_raw.split('/')
+            else:
+                qt = '--'
+                qtc = qtc_raw
+            
+            # Calculate RR from HR
+            try:
+                hr_val = float(hr) if hr != '--' else 0
+                rr = int(60000 / hr_val) if hr_val > 0 else '--'
+            except:
+                rr = '--'
+            
+            # Get wave amplitudes from ECG test page if available
+            rv5_sv1_sum = '--'
+            p_qrs_t = '--/--/--'
+            rv5_sv1 = '--/--'
+            
+            if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
+                try:
+                    # Calculate wave amplitudes in real-time
+                    if hasattr(self.ecg_test_page, 'calculate_wave_amplitudes'):
+                        wave_amps = self.ecg_test_page.calculate_wave_amplitudes()
+                        if wave_amps:
+                            p_amp = wave_amps.get('p_amp', 0.0)
+                            qrs_amp = wave_amps.get('qrs_amp', 0.0)
+                            t_amp = wave_amps.get('t_amp', 0.0)
+                            rv5 = wave_amps.get('rv5', 0.0)
+                            sv1 = wave_amps.get('sv1', 0.0)
+                            
+                            # Convert to display format
+                            rv5_sv1_sum = f"{(rv5 + sv1):.3f}" if (rv5 + sv1) > 0 else '--'
+                            p_qrs_t = f"{p_amp:.2f}/{qrs_amp:.2f}/{t_amp:.2f}" if (p_amp + qrs_amp + t_amp) > 0 else '--/--/--'
+                            rv5_sv1 = f"{rv5:.2f}/{sv1:.2f}" if (rv5 + sv1) > 0 else '--/--'
+                except Exception as e:
+                    print(f"Error calculating wave amplitudes for dashboard: {e}")
+            
+            # Build metrics table
+            metrics = [
+                ("HR", f"{hr} BPM" if hr != '--' else '--'),
+                ("PR", f"{pr} ms" if pr != '--' else '--'),
+                ("QRS Complex", f"{qrs} ms" if qrs != '--' else '--'),
+                ("QT", f"{qt} ms" if qt != '--' else '--'),
+                ("QTc", f"{qtc} ms" if qtc != '--' else '--'),
+                ("ST", f"{st} ms" if st != '--' else '--'),
+                ("RR", f"{rr} ms" if rr != '--' else '--'),
+                ("RV5+SV1", f"{rv5_sv1_sum} mV"),
+                ("P/QRS/T", f"{p_qrs_t} mm"),
+                ("QRS Axis", f"{qrs_axis}°" if qrs_axis != '--' else '--'),
+                ("RV5/SV1", f"{rv5_sv1} mV"),
+            ]
+            
+            # Render as HTML table with "LIVE" badge
+            labels_row = []
+            values_row = []
+            for label, value in metrics:
+                labels_row.append(
+                    f"<td style='width:8%; padding:6px 82px; text-align:center; white-space:nowrap; color:#ff6600; font-size:15px; font-weight:900; letter-spacing:0.2px;'>{label}</td>"
+                )
+                values_row.append(
+                    f"<td style='width:8%; padding:4px 16px 8px; text-align:center; white-space:nowrap; color:#222222; font-size:14px; font-weight:800;'>{value}</td>"
+                )
+            
+            # Add LIVE indicator
+            live_badge = (
+                "<div style='text-align:right; padding:4px 8px; font-size:11px;'>"
+                "<span style='background:#4CAF50; color:white; padding:2px 8px; border-radius:4px; font-weight:bold;'>"
+                "● LIVE</span>"
+                "</div>"
+            )
+            
+            table_html = (
+                live_badge +
+                "<table style='width:100%; border-collapse:collapse; table-layout:fixed;'>"
+                + "<tr>" + "".join(labels_row) + "</tr>"
+                + "<tr>" + "".join(values_row) + "</tr>"
+                + "</table>"
+            )
+            
+            if hasattr(self, 'parameters_text'):
+                self.parameters_text.setHtml(table_html)
+                
+        except Exception as e:
+            print(f"Error updating live metrics panel: {e}")
 
     def is_ecg_active(self):
         """Return True if demo is ON or serial acquisition is running."""
@@ -2177,6 +2331,13 @@ class Dashboard(QWidget):
                     ecg_data['rv5'] = 0.0
                     ecg_data['sv1'] = 0.0
                 
+                # Add user details to ecg_data for JSON export
+                ecg_data['user'] = {
+                    'name': self.user_details.get('full_name', self.username or ''),
+                    'phone': self.user_details.get('phone', ''),
+                }
+                ecg_data['machine_serial'] = self.user_details.get('serial_id', '') or os.getenv('MACHINE_SERIAL_ID', '')
+                
                 # Generate the PDF with patient details
                 generate_ecg_report(filename, ecg_data, lead_img_paths, self, self.ecg_test_page, patient)
                 
@@ -2205,6 +2366,14 @@ class Dashboard(QWidget):
                             dst_path = os.path.join(reports_dir, dst_basename)
                             counter += 1
                         shutil.copyfile(filename, dst_path)
+                    
+                    # Also copy the JSON twin if it exists
+                    src_json = os.path.splitext(filename)[0] + ".json"
+                    if os.path.exists(src_json):
+                        dst_json = os.path.splitext(dst_path)[0] + ".json"
+                        if os.path.abspath(src_json) != os.path.abspath(dst_json):
+                            shutil.copyfile(src_json, dst_json)
+                            print(f"✓ Copied JSON twin to: {dst_json}")
                     # Update index.json (prepend)
                     index_path = os.path.join(reports_dir, "index.json")
                     items = []

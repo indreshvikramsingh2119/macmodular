@@ -184,6 +184,98 @@ class AdminReportsDialog(QDialog):
         except Exception:
             return f"{int(num_bytes/1024)} KB"
 
+    def show_details(self):
+        try:
+            key = self._selected_key()
+            if not key:
+                self.details.setPlainText("")
+                return
+            
+            # Prefer JSON twin
+            json_key = key if key.lower().endswith('.json') else key.rsplit('.',1)[0] + '.json'
+            
+            # Try to get JSON from S3
+            data = None
+            url_res = self.cloud_uploader.generate_presigned_url(json_key)
+            if url_res.get('status') == 'success':
+                import requests, json
+                try:
+                    r = requests.get(url_res['url'], timeout=20)
+                    if r.status_code == 200:
+                        data = r.json()
+                except Exception as e:
+                    print(f"Failed to fetch JSON from S3: {e}")
+            
+            # If S3 fetch failed, try local file
+            if not data:
+                import json, os
+                # Try local reports directory
+                local_json = os.path.basename(json_key)
+                local_paths = [
+                    os.path.join("reports", local_json),
+                    os.path.join("../reports", local_json),
+                    local_json
+                ]
+                for lp in local_paths:
+                    if os.path.exists(lp):
+                        try:
+                            with open(lp, 'r', encoding='utf-8') as f:
+                                data = json.load(f)
+                            break
+                        except Exception:
+                            pass
+            
+            if not data:
+                self.details.setHtml(
+                    "<div style='padding:12px; color:#666;'>"
+                    "<b>No JSON details available</b><br><br>"
+                    f"Tried: {os.path.basename(json_key)}<br>"
+                    "This report may not have associated metrics data."
+                    "</div>"
+                )
+                return
+            
+            # Render key fields with better formatting
+            patient = data.get('patient', {}) or {}
+            user = data.get('user', {}) or {}
+            metrics = data.get('metrics', {}) or {}
+            machine = data.get('machine_serial', '')
+            report_date = data.get('report_date', '')
+            
+            html_parts = []
+            html_parts.append("<div style='padding:8px; font-family:Arial;'>")
+            
+            # Patient info
+            html_parts.append("<div style='background:#fff3e0; padding:8px; border-radius:8px; margin-bottom:8px;'>")
+            html_parts.append(f"<b style='color:#ff6600;'>Patient:</b> {patient.get('name','')} &nbsp; <b>Age:</b> {patient.get('age','')}")
+            html_parts.append("</div>")
+            
+            # User info
+            html_parts.append("<div style='background:#e3f2fd; padding:8px; border-radius:8px; margin-bottom:8px;'>")
+            html_parts.append(f"<b style='color:#1976d2;'>User:</b> {user.get('name','')} &nbsp; <b>Phone:</b> {user.get('phone','')}")
+            html_parts.append("</div>")
+            
+            # Machine info
+            html_parts.append("<div style='background:#f1f8e9; padding:8px; border-radius:8px; margin-bottom:12px;'>")
+            html_parts.append(f"<b style='color:#558b2f;'>Machine Serial:</b> {machine} &nbsp; <b>Date:</b> {report_date}")
+            html_parts.append("</div>")
+            
+            # Metrics table
+            html_parts.append("<div style='background:#fafafa; padding:8px; border-radius:8px;'>")
+            html_parts.append("<b style='color:#ff6600;'>ECG Metrics:</b><br><br>")
+            html_parts.append("<table style='width:100%; font-size:13px;'>")
+            for k, v in metrics.items():
+                html_parts.append(f"<tr><td style='padding:4px; font-weight:bold; color:#333;'>{k}:</td><td style='padding:4px;'>{v}</td></tr>")
+            html_parts.append("</table>")
+            html_parts.append("</div>")
+            
+            html_parts.append("</div>")
+            
+            self.details.setHtml("".join(html_parts))
+        except Exception as e:
+            import traceback
+            self.details.setPlainText(f"Failed to load details:\n{e}\n\n{traceback.format_exc()}")
+
     def download_selected(self):
         key = self._selected_key()
         if not key:

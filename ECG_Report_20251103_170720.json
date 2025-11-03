@@ -1,0 +1,16 @@
+{
+  "patient": {},
+  "machine_serial": "12",
+  "user": {},
+  "report_date": "",
+  "metrics": {
+    "heart_rate": null,
+    "pr_interval": 169,
+    "qrs_duration": 84,
+    "qt_interval": 347,
+    "qtc_interval": 367,
+    "st_interval": -3,
+    "rr_interval": null,
+    "rv5_sv1": null
+  }
+}
