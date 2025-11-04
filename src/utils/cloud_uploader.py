@@ -233,6 +233,109 @@ class CloudUploader:
         except Exception as e:
             return {"status": "error", "message": str(e)}
     
+    def upload_user_signup(self, user_data):
+        """
+        Upload user signup details to cloud storage
+        
+        Args:
+            user_data (dict): Dictionary containing user signup information
+                             {username, full_name, age, gender, phone, address, serial_number, registered_at}
+        
+        Returns:
+            dict: Upload result with status and details
+        """
+        print(f"🔵 upload_user_signup called with data: {user_data}")
+        
+        if not self.upload_enabled:
+            msg = "Cloud upload is disabled"
+            print(f"❌ {msg}")
+            return {"status": "disabled", "message": msg}
+        
+        if not self.is_configured():
+            msg = f"Cloud service '{self.cloud_service}' is not properly configured"
+            print(f"❌ {msg}")
+            return {"status": "error", "message": msg}
+        
+        if not user_data or not isinstance(user_data, dict):
+            msg = "Invalid user data"
+            print(f"❌ {msg}")
+            return {"status": "error", "message": msg}
+        
+        try:
+            # Create a JSON file with user signup details
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            username = user_data.get('username', 'unknown')
+            filename = f"user_signup_{username}_{timestamp}.json"
+            
+            # Create temp directory if it doesn't exist
+            temp_dir = "temp"
+            os.makedirs(temp_dir, exist_ok=True)
+            file_path = os.path.join(temp_dir, filename)
+            
+            print(f"📝 Creating user signup file: {file_path}")
+            
+            # Add timestamp to user data
+            upload_data = user_data.copy()
+            upload_data['uploaded_at'] = datetime.now().isoformat()
+            
+            # Write user data to JSON file
+            with open(file_path, 'w') as f:
+                json.dump(upload_data, f, indent=2)
+            
+            print(f"✅ User signup file created successfully")
+            
+            # Upload to cloud
+            metadata = {
+                'type': 'user_signup',
+                'username': username,
+                'uploaded_at': datetime.now().isoformat()
+            }
+            
+            print(f"☁️ Uploading to {self.cloud_service}...")
+            
+            result = None
+            if self.cloud_service == 's3':
+                result = self._upload_to_s3(file_path, metadata)
+            elif self.cloud_service == 'azure':
+                result = self._upload_to_azure(file_path, metadata)
+            elif self.cloud_service == 'gcs':
+                result = self._upload_to_gcs(file_path, metadata)
+            elif self.cloud_service == 'api':
+                result = self._upload_to_api(file_path, metadata)
+            elif self.cloud_service == 'ftp':
+                result = self._upload_to_ftp(file_path, metadata)
+            elif self.cloud_service == 'sftp':
+                result = self._upload_to_ftp(file_path, metadata, use_sftp=True)
+            elif self.cloud_service == 'dropbox':
+                result = self._upload_to_dropbox(file_path, metadata)
+            else:
+                result = {"status": "error", "message": f"Unknown cloud service: {self.cloud_service}"}
+            
+            print(f"📤 Upload result: {result}")
+            
+            # Clean up temp file
+            try:
+                os.remove(file_path)
+                print(f"🗑️ Temp file removed: {file_path}")
+            except Exception as cleanup_err:
+                print(f"⚠️ Could not remove temp file: {cleanup_err}")
+            
+            # Log upload
+            if result and result.get("status") == "success":
+                self._log_upload(filename, result, metadata)
+                print(f"✅ User signup uploaded to {self.cloud_service}: {username}")
+            else:
+                print(f"❌ Upload failed: {result}")
+            
+            return result
+            
+        except Exception as e:
+            import traceback
+            error_msg = f"Failed to upload user signup: {str(e)}"
+            print(f"❌ {error_msg}")
+            print(f"Stack trace: {traceback.format_exc()}")
+            return {"status": "error", "message": error_msg}
+    
     def _upload_to_s3(self, file_path, metadata):
         """Upload to AWS S3"""
         try:

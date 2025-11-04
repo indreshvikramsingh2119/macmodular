@@ -195,9 +195,9 @@ class Dashboard(QWidget):
         
         # Try to load background GIFs using portable paths
         if not self.use_gif_background:
-            # Use solid color background
-            self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #f8f9fa, stop:1 #e9ecef);")
-            print("Using solid color background (GIF background disabled)")
+            # Use light gray background matching ECG 12 test page
+            self.bg_label.setStyleSheet("background: #f8f9fa;")
+            print("Using light gray background (matching ECG page)")
         else:
             # Priority order based on user preference
             movie = None
@@ -231,14 +231,16 @@ class Dashboard(QWidget):
                 self.bg_label.setMovie(movie)
                 movie.start()
             else:
-                # If no GIF found, create a solid color background
-                self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #f8f9fa, stop:1 #e9ecef);")
-                print("Using solid color background (no GIFs found)")
+                # If no GIF found, use light gray background matching ECG page
+                self.bg_label.setStyleSheet("background: #f8f9fa;")
+                print("Using light gray background (no GIFs found)")
         # --- Central stacked widget for in-place navigation ---
         self.page_stack = QStackedWidget(self)
         
         # --- Dashboard main page widget ---
         self.dashboard_page = DashboardHomeWidget()
+        # Set light gray background for main content area (matching ECG page)
+        self.dashboard_page.setStyleSheet("background-color: #f8f9fa;")
         dashboard_layout = QVBoxLayout(self.dashboard_page)
         dashboard_layout.setSpacing(20)
         dashboard_layout.setContentsMargins(20, 20, 20, 20)
@@ -274,7 +276,7 @@ class Dashboard(QWidget):
         self.dark_btn.setStyleSheet("background: #222; color: #fff; border-radius: 10px; padding: 4px 18px;")
         self.dark_btn.clicked.connect(self.toggle_dark_mode)
         self.dark_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        # Hide button per request while preserving logic
+        # Hide dark mode button
         self.dark_btn.setVisible(False)
         
         # Removed background control button per request
@@ -3061,35 +3063,42 @@ class Dashboard(QWidget):
             )
             print(f"❌ Cloud sync error: {e}")
     
+    def apply_dark_theme(self):
+        """Apply dark theme styling to all UI components"""
+        self.setStyleSheet("""
+            QWidget { background: #181818; color: #fff; }
+            QFrame { background: #232323 !important; border-radius: 16px; color: #fff; border: 2px solid #fff; }
+            QLabel { color: #fff; }
+            QPushButton { background: #333; color: #ff6600; border-radius: 10px; }
+            QPushButton:checked { background: #ff6600; color: #fff; }
+            QCalendarWidget QWidget { background: #232323; color: #fff; }
+            QCalendarWidget QAbstractItemView { background: #232323; color: #fff; selection-background-color: #444; selection-color: #ff6600; }
+            QTextEdit { background: #232323; color: #fff; border-radius: 12px; border: 2px solid #fff; }
+        """)
+        self.dark_btn.setText("Light Mode")
+        # Set matplotlib canvas backgrounds to dark
+        self.ecg_canvas.axes.set_facecolor("#232323")
+        self.ecg_canvas.figure.set_facecolor("#232323")
+        for child in self.findChildren(QFrame):
+            child.setStyleSheet("background: #232323; border-radius: 16px; color: #fff; border: 2px solid #fff;")
+        for key, label in self.metric_labels.items():
+            label.setStyleSheet("color: #fff; background: transparent;")
+            for canvas in child.findChildren(MplCanvas):
+                canvas.axes.set_facecolor("#232323")
+                canvas.figure.set_facecolor("#232323")
+                canvas.draw()
+            for self.schedule_calendar in child.findChildren(QCalendarWidget):
+                self.schedule_calendar.setStyleSheet("background: #232323; color: #fff; border-radius: 12px; border: 2px solid #fff;")
+            for txt in child.findChildren(QTextEdit):
+                txt.setStyleSheet("background: #232323; color: #fff; border-radius: 12px; border: 2px solid #fff;")
+        # Update ECG test page theme if it exists
+        if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'update_metrics_frame_theme'):
+            self.ecg_test_page.update_metrics_frame_theme(self.dark_mode, self.medical_mode)
+    
     def toggle_dark_mode(self):
         self.dark_mode = not self.dark_mode
         if self.dark_mode:
-            self.setStyleSheet("""
-                QWidget { background: #181818; color: #fff; }
-                QFrame { background: #232323 !important; border-radius: 16px; color: #fff; border: 2px solid #fff; }
-                QLabel { color: #fff; }
-                QPushButton { background: #333; color: #ff6600; border-radius: 10px; }
-                QPushButton:checked { background: #ff6600; color: #fff; }
-                QCalendarWidget QWidget { background: #232323; color: #fff; }
-                QCalendarWidget QAbstractItemView { background: #232323; color: #fff; selection-background-color: #444; selection-color: #ff6600; }
-                QTextEdit { background: #232323; color: #fff; border-radius: 12px; border: 2px solid #fff; }
-            """)
-            self.dark_btn.setText("Light Mode")
-            # Set matplotlib canvas backgrounds to dark
-            self.ecg_canvas.axes.set_facecolor("#232323")
-            self.ecg_canvas.figure.set_facecolor("#232323")
-            for child in self.findChildren(QFrame):
-                child.setStyleSheet("background: #232323; border-radius: 16px; color: #fff; border: 2px solid #fff;")
-            for key, label in self.metric_labels.items():
-                label.setStyleSheet("color: #fff; background: transparent;")
-                for canvas in child.findChildren(MplCanvas):
-                    canvas.axes.set_facecolor("#232323")
-                    canvas.figure.set_facecolor("#232323")
-                    canvas.draw()
-                for self.schedule_calendar in child.findChildren(QCalendarWidget):
-                    self.schedule_calendar.setStyleSheet("background: #232323; color: #fff; border-radius: 12px; border: 2px solid #fff;")
-                for txt in child.findChildren(QTextEdit):
-                    txt.setStyleSheet("background: #232323; color: #fff; border-radius: 12px; border: 2px solid #fff;")
+            self.apply_dark_theme()
         else:
             self.setStyleSheet("")
             self.dark_btn.setText("Dark Mode")
@@ -3107,9 +3116,9 @@ class Dashboard(QWidget):
                     self.schedule_calendar.setStyleSheet("")
                 for txt in child.findChildren(QTextEdit):
                     txt.setStyleSheet("")
-        # Update ECG test page theme if it exists
-        if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'update_metrics_frame_theme'):
-            self.ecg_test_page.update_metrics_frame_theme(self.dark_mode, self.medical_mode)
+            # Update ECG test page theme if it exists
+            if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'update_metrics_frame_theme'):
+                self.ecg_test_page.update_metrics_frame_theme(self.dark_mode, self.medical_mode)
     
     def test_asset_paths(self):
         """

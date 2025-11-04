@@ -540,6 +540,38 @@ class LoginRegisterDialog(QDialog):
         if not ok:
             QMessageBox.warning(self, "Error", msg)
             return
+        
+        # Upload user signup details to cloud
+        try:
+            from utils.cloud_uploader import get_cloud_uploader
+            from datetime import datetime
+            
+            uploader = get_cloud_uploader()
+            user_data = {
+                'username': phone,
+                'full_name': name,
+                'age': age,
+                'gender': gender,
+                'phone': phone,
+                'address': address,
+                'serial_number': serial_id,
+                'registered_at': datetime.now().isoformat()
+            }
+            
+            # Upload to cloud in background (non-blocking)
+            import threading
+            def upload_in_background():
+                result = uploader.upload_user_signup(user_data)
+                if result.get('status') == 'success':
+                    print(f"✅ User signup uploaded to cloud: {name}")
+                else:
+                    print(f"⚠️ Failed to upload user signup: {result.get('message', 'Unknown error')}")
+            
+            thread = threading.Thread(target=upload_in_background, daemon=True)
+            thread.start()
+        except Exception as e:
+            print(f"⚠️ Error uploading user signup: {e}")
+        
         QMessageBox.information(self, "Success", "Registration successful! You can now sign in.")
         self.stacked.setCurrentIndex(0)
     
