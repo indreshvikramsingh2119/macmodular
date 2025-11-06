@@ -1190,16 +1190,16 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         except Exception as e:
             print(f"⚠️ Fallback amplitude computation failed: {e}")
 
-    # Convert to mm (ECG standard: 1mV = 10mm)
-    # Keep 1 decimal place for better precision
-    p_mm = round(p_amp_mv * 10, 1) if p_amp_mv > 0 else 1.2  # fallback to 1.2
-    qrs_mm = round(qrs_amp_mv * 10, 1) if qrs_amp_mv > 0 else 15.0  # fallback to 15.0
-    t_mm = round(t_amp_mv * 10, 1) if t_amp_mv > 0 else 3.0  # fallback to 3.0
+    # P/QRS/T amplitudes - Display in mV (medical standard)
+    # Values from calculate_wave_amplitudes() are already in mV
+    p_mv = round(p_amp_mv, 2) if p_amp_mv > 0 else 0.12  # fallback to 0.12 mV
+    qrs_mv = round(qrs_amp_mv, 2) if qrs_amp_mv > 0 else 1.50  # fallback to 1.50 mV
+    t_mv = round(t_amp_mv, 2) if t_amp_mv > 0 else 0.30  # fallback to 0.30 mV
     
-    print(f"   Converted to mm: P={p_mm:.1f}, QRS={qrs_mm:.1f}, T={t_mm:.1f}")
+    print(f"   P/QRS/T amplitudes (mV): P={p_mv:.2f}, QRS={qrs_mv:.2f}, T={t_mv:.2f}")
     
-    # SECOND COLUMN - P/QRS/T
-    p_qrs_label = String(240, 670, f"P/QRS/T  : {p_mm:.1f}/{qrs_mm:.1f}/{t_mm:.1f} mm", 
+    # SECOND COLUMN - P/QRS/T (in millivolts)
+    p_qrs_label = String(240, 670, f"P/QRS/T  : {p_mv:.2f}/{qrs_mv:.2f}/{t_mv:.2f} mV", 
                          fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(p_qrs_label)
 
@@ -1257,16 +1257,16 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     
     print(f"   RV5={rv5_mv:.3f} mV, SV1={sv1_mv:.3f} mV (NO conversion - already in mV)")
     
-    # SECOND COLUMN - RV5/SV1
-    rv5_sv_label = String(240, 650, f"RV5/SV1  : {rv5_mv:.3f}/{sv1_mv:.3f}", 
+    # SECOND COLUMN - RV5/SV1 (in millivolts - medical standard)
+    rv5_sv_label = String(240, 650, f"RV5/SV1  : {rv5_mv:.3f}/{sv1_mv:.3f} mV", 
                           fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv_label)
 
-    # Calculate RV5+SV1 sum
+    # Calculate RV5+SV1 sum (Sokolow-Lyon Index for LVH detection)
     rv5_sv1_sum = rv5_mv + sv1_mv
     
-    # SECOND COLUMN - RV5+SV1
-    rv5_sv1_sum_label = String(240, 630, f"RV5+SV1 : {rv5_sv1_sum:.3f}", 
+    # SECOND COLUMN - RV5+SV1 (in millivolts - medical standard)
+    rv5_sv1_sum_label = String(240, 630, f"RV5+SV1  : {rv5_sv1_sum:.3f} mV", 
                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv1_sum_label)
 
@@ -1574,7 +1574,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 "ST_ms": ST,
                 "RR_ms": RR,
                 "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
-                "P_QRS_T_mm": [round(p_mm, 1), round(qrs_mm, 1), round(t_mm, 1)],
+                "P_QRS_T_mV": [round(p_mv, 2), round(qrs_mv, 2), round(t_mv, 2)],  # Changed from mm to mV
                 "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)],
                 "QTCF_ms": int(qtcf_ms) if 'qtcf_ms' in locals() and qtcf_ms > 0 else 0,
             }
@@ -1611,7 +1611,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
             "ST_ms": ST,
             "RR_ms": RR,
             "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
-            "P_QRS_T_mm": [round(p_mm, 1), round(qrs_mm, 1), round(t_mm, 1)],
+            "P_QRS_T_mV": [round(p_mv, 2), round(qrs_mv, 2), round(t_mv, 2)],  # Changed from mm to mV
             "QTCF_ms": int(qtcf_ms) if 'qtcf_ms' in locals() and qtcf_ms > 0 else 0,
             "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)]
         }
