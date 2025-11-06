@@ -159,7 +159,7 @@ class Dashboard(QWidget):
         # Set responsive size policy
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumSize(800, 600)  # Minimum size for usability
-
+        
         # Reports filter date
         self.reports_filter_date = None
         
@@ -316,7 +316,7 @@ class Dashboard(QWidget):
         # Admin button (disabled per request; keep logic available)
         self.admin_btn = QPushButton("Admin")
         self.admin_btn.setVisible(False)
-
+        
         self.sign_btn = QPushButton("Sign Out")
         self.sign_btn.setStyleSheet("background: #e74c3c; color: white; border-radius: 10px; padding: 4px 18px;")
         self.sign_btn.clicked.connect(self.handle_sign_out)
@@ -718,7 +718,7 @@ class Dashboard(QWidget):
         _footer_layout.setContentsMargins(10, 8, 10, 8)
         _footer_layout.addWidget(QLabel(""))
         issue_layout.addWidget(self.conclusion_footer)
-
+        
         grid.addWidget(issue_card, 2, 1, 1, 1)
 
         # Separate card for Additional Notes (outside Conclusion)
@@ -2339,7 +2339,7 @@ class Dashboard(QWidget):
                     'phone': self.user_details.get('phone', ''),
                 }
                 ecg_data['machine_serial'] = self.user_details.get('serial_id', '') or os.getenv('MACHINE_SERIAL_ID', '')
-                
+
                 # Generate the PDF with patient details
                 generate_ecg_report(filename, ecg_data, lead_img_paths, self, self.ecg_test_page, patient)
                 
@@ -3087,8 +3087,8 @@ class Dashboard(QWidget):
                 canvas.axes.set_facecolor("#232323")
                 canvas.figure.set_facecolor("#232323")
                 canvas.draw()
-            for self.schedule_calendar in child.findChildren(QCalendarWidget):
-                self.schedule_calendar.setStyleSheet("background: #232323; color: #fff; border-radius: 12px; border: 2px solid #fff;")
+        for self.schedule_calendar in child.findChildren(QCalendarWidget):
+            self.schedule_calendar.setStyleSheet("background: #232323; color: #fff; border-radius: 12px; border: 2px solid #fff;")
             for txt in child.findChildren(QTextEdit):
                 txt.setStyleSheet("background: #232323; color: #fff; border-radius: 12px; border: 2px solid #fff;")
         # Update ECG test page theme if it exists
@@ -3116,9 +3116,9 @@ class Dashboard(QWidget):
                     self.schedule_calendar.setStyleSheet("")
                 for txt in child.findChildren(QTextEdit):
                     txt.setStyleSheet("")
-            # Update ECG test page theme if it exists
-            if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'update_metrics_frame_theme'):
-                self.ecg_test_page.update_metrics_frame_theme(self.dark_mode, self.medical_mode)
+        # Update ECG test page theme if it exists
+        if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'update_metrics_frame_theme'):
+            self.ecg_test_page.update_metrics_frame_theme(self.dark_mode, self.medical_mode)
     
     def test_asset_paths(self):
         """
