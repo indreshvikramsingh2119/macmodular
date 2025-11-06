@@ -1190,18 +1190,88 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         except Exception as e:
             print(f"⚠️ Fallback amplitude computation failed: {e}")
 
-    # P/QRS/T amplitudes - Display in mV (medical standard)
-    # Values from calculate_wave_amplitudes() are already in mV
-    p_mv = round(p_amp_mv, 2) if p_amp_mv > 0 else 0.12  # fallback to 0.12 mV
-    qrs_mv = round(qrs_amp_mv, 2) if qrs_amp_mv > 0 else 1.50  # fallback to 1.50 mV
-    t_mv = round(t_amp_mv, 2) if t_amp_mv > 0 else 0.30  # fallback to 0.30 mV
+    # P/QRS/T AXES - Calculate electrical axes in degrees (medical standard)
+    # Import axis calculation functions
+    from ecg.twelve_lead_test import calculate_p_axis, calculate_qrs_axis, calculate_t_axis
     
-    print(f"   P/QRS/T amplitudes (mV): P={p_mv:.2f}, QRS={qrs_mv:.2f}, T={t_mv:.2f}")
+    p_axis_deg = "--"
+    qrs_axis_deg = "--"
+    t_axis_deg = "--"
     
-    # SECOND COLUMN - P/QRS/T (in millivolts)
-    p_qrs_label = String(240, 670, f"P/QRS/T  : {p_mv:.2f}/{qrs_mv:.2f}/{t_mv:.2f} mV", 
-                         fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(p_qrs_label)
+    if ecg_test_page is not None and hasattr(ecg_test_page, 'data'):
+        try:
+            from scipy.signal import butter, filtfilt, find_peaks
+            
+            # Get Lead I (index 0), Lead aVF (index 5), Lead II (index 1)
+            lead_I = ecg_test_page.data[0] if len(ecg_test_page.data) > 0 else None
+            lead_aVF = ecg_test_page.data[5] if len(ecg_test_page.data) > 5 else None
+            lead_II = ecg_test_page.data[1] if len(ecg_test_page.data) > 1 else None
+            
+            if lead_I is not None and lead_aVF is not None and lead_II is not None:
+                if len(lead_I) > 200 and len(lead_aVF) > 200 and len(lead_II) > 200:
+                    fs = 250.0
+                    if hasattr(ecg_test_page, 'sampler') and hasattr(ecg_test_page.sampler, 'sampling_rate'):
+                        fs = float(ecg_test_page.sampler.sampling_rate)
+                    
+                    # Filter Lead II to detect R-peaks
+                    nyq = fs / 2.0
+                    b, a = butter(2, [max(0.5/nyq, 0.001), min(40.0/nyq, 0.99)], btype='band')
+                    filtered_ii = filtfilt(b, a, np.asarray(lead_II))
+                    
+                    # Detect R-peaks
+                    squared = np.square(np.diff(filtered_ii))
+                    integrated = np.convolve(squared, np.ones(int(0.15*fs))/(0.15*fs), mode='same')
+                    threshold = np.mean(integrated) + 0.5 * np.std(integrated)
+                    r_peaks, _ = find_peaks(integrated, height=threshold, distance=int(0.6*fs))
+                    
+                    if len(r_peaks) >= 2:
+                        # Detect P-peaks (120-200ms before R)
+                        p_peaks = []
+                        for r in r_peaks:
+                            p_start = max(0, r - int(0.20 * fs))
+                            p_end = max(0, r - int(0.12 * fs))
+                            if p_end > p_start:
+                                segment = filtered_ii[p_start:p_end]
+                                if len(segment) > 0:
+                                    p_idx = p_start + np.argmax(segment)
+                                    p_peaks.append(p_idx)
+                        
+                        # Detect T-peaks (100-300ms after R)
+                        t_peaks = []
+                        for r in r_peaks:
+                            t_start = min(len(filtered_ii), r + int(0.10 * fs))
+                            t_end = min(len(filtered_ii), r + int(0.30 * fs))
+                            if t_end > t_start:
+                                segment = filtered_ii[t_start:t_end]
+                                if len(segment) > 0:
+                                    t_idx = t_start + np.argmax(segment)
+                                    t_peaks.append(t_idx)
+                        
+                        # Calculate axes using medical standard functions
+                        if len(p_peaks) >= 1:
+                            p_axis_deg = calculate_p_axis(np.asarray(lead_I), np.asarray(lead_aVF), p_peaks, fs)
+                        if len(r_peaks) >= 2:
+                            qrs_axis_deg = calculate_qrs_axis(np.asarray(lead_I), np.asarray(lead_aVF), r_peaks, fs)
+                        if len(t_peaks) >= 1:
+                            t_axis_deg = calculate_t_axis(np.asarray(lead_I), np.asarray(lead_aVF), t_peaks, fs)
+                        
+                        print(f"✅ Calculated axes: P={p_axis_deg}, QRS={qrs_axis_deg}, T={t_axis_deg}")
+        except Exception as e:
+            print(f"⚠️ Error calculating P/QRS/T axes: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Format for display (remove ° symbol for cleaner display, will add in label)
+    p_axis_str = str(p_axis_deg).replace('°', '') if p_axis_deg != "--" else "--"
+    qrs_axis_str = str(qrs_axis_deg).replace('°', '') if qrs_axis_deg != "--" else "--"
+    t_axis_str = str(t_axis_deg).replace('°', '') if t_axis_deg != "--" else "--"
+    
+    print(f"   P/QRS/T axes (degrees): P={p_axis_str}°, QRS={qrs_axis_str}°, T={t_axis_str}°")
+    
+    # SECOND COLUMN - P/QRS/T AXES (in degrees, medical standard)
+    p_qrs_t_axis_label = String(240, 670, f"P/QRS/T  : {p_axis_str}°/{qrs_axis_str}°/{t_axis_str}°", 
+                                 fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    master_drawing.add(p_qrs_t_axis_label)
 
     # Get RV5 and SV1 amplitudes
     rv5_amp = data.get('rv5', 0.0)
@@ -1574,7 +1644,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 "ST_ms": ST,
                 "RR_ms": RR,
                 "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
-                "P_QRS_T_mV": [round(p_mv, 2), round(qrs_mv, 2), round(t_mv, 2)],  # Changed from mm to mV
+                "P_QRS_T_axes_deg": [p_axis_str, qrs_axis_str, t_axis_str],  # Changed to axes in degrees
                 "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)],
                 "QTCF_ms": int(qtcf_ms) if 'qtcf_ms' in locals() and qtcf_ms > 0 else 0,
             }
@@ -1611,7 +1681,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
             "ST_ms": ST,
             "RR_ms": RR,
             "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
-            "P_QRS_T_mV": [round(p_mv, 2), round(qrs_mv, 2), round(t_mv, 2)],  # Changed from mm to mV
+            "P_QRS_T_axes_deg": [p_axis_str, qrs_axis_str, t_axis_str],  # Changed to axes in degrees
             "QTCF_ms": int(qtcf_ms) if 'qtcf_ms' in locals() and qtcf_ms > 0 else 0,
             "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)]
         }
