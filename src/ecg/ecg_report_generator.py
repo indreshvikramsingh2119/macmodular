@@ -1193,7 +1193,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
 
     # P/QRS/T AXES - Calculate electrical axes in degrees (medical standard)
     # Import axis calculation functions
-    from ecg.twelve_lead_test import calculate_p_axis, calculate_qrs_axis, calculate_t_axis
+    from ecg.twelve_lead_test import calculate_qrs_axis
     
     p_axis_deg = "--"
     qrs_axis_deg = "--"
@@ -1248,13 +1248,12 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                                     t_idx = t_start + np.argmax(segment)
                                     t_peaks.append(t_idx)
                         
-                        # Calculate axes using medical standard functions
-                        if len(p_peaks) >= 1:
-                            p_axis_deg = calculate_p_axis(np.asarray(lead_I), np.asarray(lead_aVF), p_peaks, fs)
+                        # Calculate QRS axis (P and T axis calculations removed for simplification)
                         if len(r_peaks) >= 2:
                             qrs_axis_deg = calculate_qrs_axis(np.asarray(lead_I), np.asarray(lead_aVF), r_peaks, fs)
-                        if len(t_peaks) >= 1:
-                            t_axis_deg = calculate_t_axis(np.asarray(lead_I), np.asarray(lead_aVF), t_peaks, fs)
+                        # P and T axes set to "--" (not calculated in simplified version)
+                        p_axis_deg = "--"
+                        t_axis_deg = "--"
                         
                         print(f"✅ Calculated axes: P={p_axis_deg}, QRS={qrs_axis_deg}, T={t_axis_deg}")
         except Exception as e:
