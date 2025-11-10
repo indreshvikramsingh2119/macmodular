@@ -1245,7 +1245,7 @@ class ECGMenu(QGroupBox):
     def create_working_mode_content(self):
         # Get current settings from settings manager
         if not self.settings_manager:
-        self.settings_manager = SettingsManager()
+            self.settings_manager = SettingsManager()
         
         # Define sections for working mode
         sections = [
@@ -1954,7 +1954,7 @@ class ECGMenu(QGroupBox):
                     dashboard.close()
                 
                 # Force exit the application
-            QApplication.quit()
+                QApplication.quit()
                 sys.exit(0)
             except Exception as e:
                 print(f"Error during exit: {e}")
