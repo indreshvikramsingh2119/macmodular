@@ -160,9 +160,9 @@ class AdminReportsDialog(QDialog):
         # Summary cards - Modern design with icons and colors
         cards = QHBoxLayout()
         cards.setSpacing(16)
-        self.count_card = self._metric_card("Total Files", "0", "📄", "#9C27B0")
-        self.size_card = self._metric_card("Total Size", "0 KB", "💾", "#FF9800")
-        self.latest_card = self._metric_card("Latest Upload", "–", "🕒", "#00BCD4")
+        self.count_card = self._metric_card("Total Files", "0", "■", "#9C27B0")
+        self.size_card = self._metric_card("Total Size", "0 KB", "▲", "#FF9800")
+        self.latest_card = self._metric_card("Latest Upload", "–", "◆", "#00BCD4")
         cards.addWidget(self.count_card, 1)
         cards.addWidget(self.size_card, 1)
         cards.addWidget(self.latest_card, 1)
@@ -294,8 +294,8 @@ class AdminReportsDialog(QDialog):
         # Summary cards for users - Modern design with icons and colors
         cards = QHBoxLayout()
         cards.setSpacing(16)
-        self.users_count_card = self._metric_card("Total Users", "0", "👥", "#4CAF50")
-        self.latest_user_card = self._metric_card("Latest Registration", "–", "📅", "#2196F3")
+        self.users_count_card = self._metric_card("Total Users", "0", "●", "#4CAF50")
+        self.latest_user_card = self._metric_card("Latest Registration", "–", "◆", "#2196F3")
         cards.addWidget(self.users_count_card, 1)
         cards.addWidget(self.latest_user_card, 1)
         cards.addStretch()
