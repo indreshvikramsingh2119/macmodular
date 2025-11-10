@@ -4,7 +4,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QMessageBox, QFileDialog, QFrame,
-    QTabWidget, QTextEdit, QWidget
+    QTabWidget, QTextEdit, QWidget, QApplication
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QHeaderView
