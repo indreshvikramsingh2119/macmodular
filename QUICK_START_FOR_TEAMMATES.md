@@ -11,30 +11,25 @@ source .venv/bin/activate  # macOS/Linux
 pip install -r requirements.txt
 ```
 
-### 2️⃣ Configure Cloud (2 minutes)
+### 2️⃣ Configure Cloud (2 minutes) - AUTOMATIC!
 ```bash
-# Copy the template
-cp env_template.txt .env
-
-# Edit and add your AWS credentials (get from Divyansh)
-nano .env
+# Run the interactive setup script
+python3 setup_cloud.py
 ```
 
-**Fill in:**
-```env
-CLOUD_SERVICE=s3
-AWS_ACCESS_KEY_ID=<ask_divyansh>
-AWS_SECRET_ACCESS_KEY=<ask_divyansh>
-AWS_S3_BUCKET=<ask_divyansh>
-AWS_S3_REGION=us-east-1
-```
+**The script will ask you for 4 values (get from Divyansh):**
+1. AWS_ACCESS_KEY_ID (20 chars, starts with AKIA)
+2. AWS_SECRET_ACCESS_KEY (40 chars, will be hidden)
+3. AWS_S3_BUCKET (bucket name)
+4. AWS_S3_REGION (default: us-east-1)
 
-### 3️⃣ Test Connection (1 minute)
-```bash
-python3 test_cloud_connection.py
-```
+**It will automatically:**
+- ✅ Validate your inputs
+- ✅ Create the .env file
+- ✅ Test the connection
+- ✅ Confirm everything works!
 
-**Expected:** `🎉 SUCCESS! Cloud upload is properly configured!`
+**Expected:** `🎉 SUCCESS! Cloud sync is now configured!`
 
 ### 4️⃣ Run the App
 ```bash
