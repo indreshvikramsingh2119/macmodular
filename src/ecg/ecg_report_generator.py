@@ -467,6 +467,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
             "QRS": 0,
             "QT": 0,
             "QTc": 0,
+            "QTcF": 0,
             "ST": 0,
             "HR_max": 0,
             "HR_min": 0,
@@ -481,7 +482,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     # SAFEGUARD: If there is no real data (all core metrics are zero), ignore any
     # persisted conclusions and use the explicit "no data" conclusions instead.
     try:
-        core_keys = ["HR", "PR", "QRS", "QT", "QTc", "ST"]
+        core_keys = ["HR", "PR", "QRS", "QT", "QTc", "QTcF", "ST"]
         all_zero = True
         for k in core_keys:
             v = data.get(k, 0)
@@ -688,6 +689,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         ["QRS Complex", f"{data['QRS']} ms", "70 ms - 120 ms"],            
         ["QT Interval", f"{data['QT']} ms", "300 ms - 450 ms"],            
         ["QTC Interval", f"{data['QTc']} ms", "300 ms - 450 ms"],          
+        ["QTCF Interval", f"{data.get('QTcF', data['QTc'])} ms", "300 ms - 450 ms"],
         ["QRS Axis", f"{data.get('QRS_axis', '--')}°", "Normal"],         
         ["ST Segment", f"{data['ST']} mV", "-0.5 mV to +1.0 mV"],  # Changed from ms to mV            
     ]
@@ -906,17 +908,24 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     QRS = data.get('QRS', 93)
     QT = data.get('QT', 354)
     QTc = data.get('QTc', 260)
-    ST = data.get('ST', 114)
+    QTcF = data.get('QTcF', QTc)
+    ST_value = data.get('ST', 0.0)
+    if isinstance(ST_value, (int, float)):
+        ST_numeric = round(float(ST_value), 2)
+        ST_display = f"{ST_numeric:.2f}"
+    else:
+        ST_numeric = ST_value
+        ST_display = str(ST_value)
     # DYNAMIC RR interval calculation from heart rate (instead of hard-coded 857)
     RR = int(60000 / HR) if HR and HR > 0 else 0  # RR interval in ms from heart rate
    
 
     # Create table data: 2 rows × 2 columns (as per your changes)
     vital_table_data = [
-        [f"HR : {HR} bpm", f"QT: {QT} ms"],
-        [f"PR : {PR} ms", f"QTc: {QTc} ms"],
-        [f"QRS: {QRS} ms", f"ST: {ST} mV"],  # Changed from ms to mV (voltage)
-        [f"RR : {RR} ms", ""]  
+        [f"HR : {HR} bpm", f"QT : {QT} ms"],
+        [f"PR : {PR} ms", f"QTc : {QTc} ms"],
+        [f"QRS: {QRS} ms", f"QTcF: {QTcF} ms"],
+        [f"RR : {RR} ms", f"ST : {ST_display} mV"]
     ]
 
     # Create vital parameters table with MORE LEFT and TOP positioning
@@ -1116,10 +1125,13 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     qtc_label = String(130, 576, f"QTc  : {QTc} ms", 
                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtc_label)
+    qtcf_label = String(130, 558, f"QTcF : {QTcF} ms",
+                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    master_drawing.add(qtcf_label)
     
     # SECOND COLUMN (Right side - x=240)
     # ST segment is voltage (mV), not time (ms)
-    st_label = String(240, 594, f"ST            : {ST} mV", 
+    st_label = String(240, 594, f"ST            : {ST_display} mV", 
                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(st_label)
 
@@ -1226,6 +1238,11 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                     r_peaks, _ = find_peaks(integrated, height=threshold, distance=int(0.6*fs))
                     
                     if len(r_peaks) >= 2:
+                        lead_I_arr = np.asarray(lead_I)
+                        lead_aVF_arr = np.asarray(lead_aVF)
+                        filtered_i = filtfilt(b, a, lead_I_arr)
+                        filtered_avf = filtfilt(b, a, lead_aVF_arr)
+
                         # Detect P-peaks (120-200ms before R)
                         p_peaks = []
                         for r in r_peaks:
@@ -1248,12 +1265,41 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                                     t_idx = t_start + np.argmax(segment)
                                     t_peaks.append(t_idx)
                         
-                        # Calculate QRS axis (P and T axis calculations removed for simplification)
+                        def _axis_from_peaks(peaks, window_ms):
+                            if not peaks:
+                                return "--"
+                            net_i_vals = []
+                            net_avf_vals = []
+                            window = max(1, int((window_ms / 1000.0) * fs))
+                            for peak_idx in peaks:
+                                start = max(0, peak_idx - window // 2)
+                                end = min(len(filtered_i), peak_idx + window // 2)
+                                if end <= start:
+                                    continue
+                                seg_i = filtered_i[start:end]
+                                seg_avf = filtered_avf[start:end]
+                                base_i = np.mean(filtered_i[max(0, start - int(0.05 * fs)):start]) if start > 0 else np.mean(seg_i)
+                                base_avf = np.mean(filtered_avf[max(0, start - int(0.05 * fs)):start]) if start > 0 else np.mean(seg_avf)
+                                net_i_vals.append(np.sum(seg_i - base_i))
+                                net_avf_vals.append(np.sum(seg_avf - base_avf))
+                            if net_i_vals and net_avf_vals:
+                                axis_rad = np.arctan2(np.mean(net_avf_vals), np.mean(net_i_vals))
+                                axis_deg = np.degrees(axis_rad)
+                                if axis_deg < -180:
+                                    axis_deg += 360
+                                if axis_deg > 180:
+                                    axis_deg -= 360
+                                return int(round(axis_deg))
+                            return "--"
+
                         if len(r_peaks) >= 2:
-                            qrs_axis_deg = calculate_qrs_axis(np.asarray(lead_I), np.asarray(lead_aVF), r_peaks, fs)
-                        # P and T axes set to "--" (not calculated in simplified version)
-                        p_axis_deg = "--"
-                        t_axis_deg = "--"
+                            qrs_axis_deg = calculate_qrs_axis(filtered_i, filtered_avf, r_peaks, fs)
+                        p_axis_candidate = _axis_from_peaks(p_peaks, 80)
+                        t_axis_candidate = _axis_from_peaks(t_peaks, 120)
+                        if p_axis_candidate != "--":
+                            p_axis_deg = p_axis_candidate
+                        if t_axis_candidate != "--":
+                            t_axis_deg = t_axis_candidate
                         
                         print(f"✅ Calculated axes: P={p_axis_deg}, QRS={qrs_axis_deg}, T={t_axis_deg}")
         except Exception as e:
@@ -1621,7 +1667,9 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 "QRS_ms": QRS,
                 "QT_ms": QT,
                 "QTc_ms": QTc,
-                "ST_ms": ST,
+                "QTcF_ms": QTcF,
+                "ST_ms": ST_numeric,
+                "ST_mV": ST_numeric,
                 "RR_ms": RR,
                 "Sokolow_Lyon_mV": round(sokolow_lyon_mv, 2),  # SV1+RV5 in mV
                 "P_QRS_T_axes_deg": [p_axis_str, qrs_axis_str, t_axis_str],
@@ -1657,7 +1705,9 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
             "QRS_ms": QRS,
             "QT_ms": QT,
             "QTc_ms": QTc,
-            "ST_ms": ST,
+            "QTcF_ms": QTcF,
+            "ST_ms": ST_numeric,
+            "ST_mV": ST_numeric,
             "RR_ms": RR,
             "Sokolow_Lyon_mV": round(sokolow_lyon_mv, 2),  # SV1+RV5 in mV
             "P_QRS_T_axes_deg": [p_axis_str, qrs_axis_str, t_axis_str],

@@ -801,8 +801,8 @@ class Dashboard(QWidget):
             ("PR", "0", "ms", "pr_interval"),
             ("QRS Complex", "0", "ms", "qrs_duration"),
             ("QRS Axis", "0°", "", "qrs_axis"),
-            ("ST", "0", "ms", "st_interval"),
-            ("QT/Qtc", "0", "ms", "qtc_interval"),
+            ("ST", "0.00", "mV", "st_interval"),
+            ("QT/QTc", "0", "ms", "qtc_interval"),
             ("Time", "00:00", "", "time_elapsed"),  # Restore time for synchronization
         ]
         
@@ -1181,7 +1181,7 @@ class Dashboard(QWidget):
                         'QRS_ms': metrics_data.get('qrs_duration', '--'),
                         'QT_ms': metrics_data.get('qt_interval', '--'),
                         'QTc_ms': metrics_data.get('qtc_interval', '--'),
-                        'ST_ms': metrics_data.get('st_interval', '--'),
+                        'ST_mV': metrics_data.get('ST_mV', metrics_data.get('st_interval', '--')),
                         'RR_ms': metrics_data.get('rr_interval', '--'),
                         'RV5_plus_SV1_mV': metrics_data.get('rv5_sv1', '--'),
                         'P_QRS_T_mm': ['--', '--', '--'],  # Placeholder
@@ -1217,11 +1217,11 @@ class Dashboard(QWidget):
                     qrs  = m.get("QRS_ms", "--")
                     qt   = m.get("QT_ms", "--")
                     qtc  = m.get("QTc_ms", "--")
-                    st   = m.get("ST_ms", "--")
+                    st   = m.get("ST_mV", m.get("ST_ms", "--"))
                     rr   = m.get("RR_ms", "--")
                     rv5p = m.get("RV5_plus_SV1_mV", "--")
                     pqt  = m.get("P_QRS_T_mm", ["--", "--", "--"])
-                    qtcF = m.get("QTCF", "--")
+                    qtcF = None
                     rv5s = m.get("RV5_SV1_mV", ["--", "--"])
 
                     # Build vertical stacks (label top, value bottom) to match top metrics layout
@@ -1231,11 +1231,10 @@ class Dashboard(QWidget):
                         ("QRS Complex", f"{qrs} ms"),
                         ("QT", f"{qt} ms"),
                         ("QTc", f"{qtc} ms"),
-                        ("ST", f"{st} ms"),
+                        ("ST", f"{st} mV"),
                         ("RR", f"{rr} ms"),
                         ("RV5+SV1", f"{rv5p} mV"),
                         ("P/QRS/T", f"{pqt[0]}/{pqt[1]}/{pqt[2]} mm"),
-                        ("QTCF", f"{qtcF}"),
                         ("RV5/SV1", f"{rv5s[0]}/{rv5s[1]} mV"),
                     ]
 
@@ -1297,14 +1296,20 @@ class Dashboard(QWidget):
             pr = self.metric_labels.get('pr_interval', QLabel()).text().replace(' ', '').replace('ms', '') or '--'
             qrs = self.metric_labels.get('qrs_duration', QLabel()).text().replace(' ', '').replace('ms', '') or '--'
             qrs_axis = self.metric_labels.get('qrs_axis', QLabel()).text().replace('°', '') or '--'
-            st = self.metric_labels.get('st_interval', QLabel()).text().replace(' ', '').replace('ms', '') or '--'
+            st_label_widget = self.metric_labels.get('st_interval') or self.metric_labels.get('st_segment')
+            st = st_label_widget.text().strip() if st_label_widget and st_label_widget.text().strip() else '--'
             qtc_raw = self.metric_labels.get('qtc_interval', QLabel()).text() or '--/--'
             
             # Parse QT/QTc
+            qt = '--'
+            qtc = '--'
             if '/' in qtc_raw:
-                qt, qtc = qtc_raw.split('/')
+                parts = [part.strip() for part in qtc_raw.replace(' ms', '').split('/') if part.strip()]
+                if len(parts) >= 1:
+                    qt = parts[0]
+                if len(parts) >= 2:
+                    qtc = parts[1]
             else:
-                qt = '--'
                 qtc = qtc_raw
             
             # Calculate RR from HR
@@ -1345,7 +1350,7 @@ class Dashboard(QWidget):
                 ("QRS Complex", f"{qrs} ms" if qrs != '--' else '--'),
                 ("QT", f"{qt} ms" if qt != '--' else '--'),
                 ("QTc", f"{qtc} ms" if qtc != '--' else '--'),
-                ("ST", f"{st} ms" if st != '--' else '--'),
+                ("ST", st if st != '--' else '--'),
                 ("RR", f"{rr} ms" if rr != '--' else '--'),
                 ("RV5+SV1", f"{rv5_sv1_sum} mV"),
                 ("P/QRS/T", f"{p_qrs_t} mm"),
@@ -1481,7 +1486,7 @@ class Dashboard(QWidget):
                 peaks, _ = find_peaks(
                     filtered_signal,
                     height=height_threshold,
-                    distance=int(0.4 * fs),
+                    distance=max(1, int(0.15 * fs)),
                     prominence=prominence_threshold
                 )
             
@@ -1492,17 +1497,18 @@ class Dashboard(QWidget):
                 # Calculate R-R intervals in milliseconds
                 rr_intervals_ms = np.diff(peaks) * (1000 / fs)
                 
-                # Filter physiologically reasonable intervals (200-2000 ms)
-                # 200 ms = 300 BPM, 2000 ms = 30 BPM
-                valid_intervals = rr_intervals_ms[(rr_intervals_ms >= 200) & (rr_intervals_ms <= 2000)]
+                # Filter physiologically reasonable intervals (120-6000 ms)
+                # 120 ms ≈ 500 BPM, 6000 ms = 10 BPM
+                min_rr_ms = 120
+                valid_intervals = rr_intervals_ms[(rr_intervals_ms >= min_rr_ms) & (rr_intervals_ms <= 6000)]
                 
                 if len(valid_intervals) > 0:
                     # Calculate heart rate from median R-R interval
                     median_rr = np.median(valid_intervals)
                     heart_rate = 60000 / median_rr  # Convert to BPM
                     
-                    # Ensure reasonable range (40-300 BPM)
-                    heart_rate = max(40, min(300, heart_rate))
+                    # Ensure reasonable range (10-300 BPM)
+                    heart_rate = max(10, min(300, heart_rate))
                     hr_int = int(round(heart_rate))
                     
                     # ANTI-FLICKERING: Smooth over last 5 readings
@@ -1516,7 +1522,10 @@ class Dashboard(QWidget):
                     # Use median for stability
                     smoothed_bpm = int(np.median(self._dashboard_bpm_buffer))
                     metrics['heart_rate'] = smoothed_bpm
-            
+                else:
+                    metrics['heart_rate'] = "0"
+            else:
+                metrics['heart_rate'] = "0"
             # Calculate QRS Axis - LIVE like ECG test page
             if hasattr(self, 'ecg_test_page') and self.ecg_test_page and hasattr(self.ecg_test_page, 'data') and len(self.ecg_test_page.data) >= 6:
                 try:
@@ -1654,7 +1663,11 @@ class Dashboard(QWidget):
                     return  # Demo mode uses fixed metrics, don't overwrite with live calculations
             # Update Heart Rate
             if 'heart_rate' in ecg_metrics:
-                self.metric_labels['heart_rate'].setText(f"{ecg_metrics['heart_rate']} BPM")
+                hr_val = ecg_metrics['heart_rate']
+                if hr_val in (None, "", "--"):
+                    self.metric_labels['heart_rate'].setText("0 BPM")
+                else:
+                    self.metric_labels['heart_rate'].setText(f"{hr_val} BPM")
             
             # Update PR Interval
             if 'pr_interval' in ecg_metrics:
@@ -1670,7 +1683,7 @@ class Dashboard(QWidget):
             
             # Update ST Interval
             if 'st_interval' in ecg_metrics:
-                self.metric_labels['st_interval'].setText(f"{ecg_metrics['st_interval']} ms")
+                self.metric_labels['st_interval'].setText(f"{ecg_metrics['st_interval']} mV")
             
             # Update QTc Interval (handles both single value and QT/QTc format)
             if 'qtc_interval' in ecg_metrics:
@@ -2022,25 +2035,38 @@ class Dashboard(QWidget):
                     ecg_metrics = self.ecg_test_page.get_current_metrics()
                     
                     # Update dashboard metrics with ECG test page data
-                    if 'heart_rate' in ecg_metrics:
-                        hr_text = ecg_metrics['heart_rate']
-                        if hr_text and hr_text != '00' and hr_text != '--':
-                            self.metric_labels['heart_rate'].setText(f"{hr_text} bpm")
+                    hr_text = ecg_metrics.get('heart_rate') if ecg_metrics else None
+                    if (not hr_text or hr_text in ('00', '--')) and hasattr(self.ecg_test_page, '_last_hr_display'):
+                        try:
+                            last_hr = int(self.ecg_test_page._last_hr_display)
+                            hr_text = str(last_hr) if last_hr > 0 else None
+                        except Exception:
+                            hr_text = None
+                    if hr_text and hr_text not in ('00', '--', '0'):
+                        self.metric_labels['heart_rate'].setText(f"{hr_text} bpm")
+                    else:
+                        self.metric_labels['heart_rate'].setText("--")
                     
                     if 'pr_interval' in ecg_metrics:
                         pr_text = ecg_metrics['pr_interval']
                         if pr_text and pr_text != '--':
                             self.metric_labels['pr_interval'].setText(f"{pr_text} ms")
+                        else:
+                            self.metric_labels['pr_interval'].setText("--")
                     
                     if 'qrs_duration' in ecg_metrics:
                         qrs_text = ecg_metrics['qrs_duration']
                         if qrs_text and qrs_text != '--':
                             self.metric_labels['qrs_duration'].setText(f"{qrs_text} ms")
+                        else:
+                            self.metric_labels['qrs_duration'].setText("--")
                     
                     if 'qrs_axis' in ecg_metrics:
                         qrs_axis_text = ecg_metrics['qrs_axis']
                         if qrs_axis_text and qrs_axis_text != '--':
                             self.metric_labels['qrs_axis'].setText(f"{qrs_axis_text}°")
+                        else:
+                            self.metric_labels['qrs_axis'].setText("--")
                     
                     # if 'sampling_rate' in ecg_metrics:  # Commented out
                     #     sr_text = ecg_metrics['sampling_rate']
@@ -2051,12 +2077,16 @@ class Dashboard(QWidget):
                     if 'st_interval' in ecg_metrics:
                         st_text = ecg_metrics['st_interval']
                         if st_text and st_text != '--':
-                            self.metric_labels['st_interval'].setText(f"{st_text} ms")
+                            self.metric_labels['st_interval'].setText(f"{st_text} mV")
+                        else:
+                            self.metric_labels['st_interval'].setText("--")
                     
                     if 'qtc_interval' in ecg_metrics:
                         qtc_text = ecg_metrics['qtc_interval']
                         if qtc_text and qtc_text != '--':
                             self.metric_labels['qtc_interval'].setText(f"{qtc_text} ms")
+                        else:
+                            self.metric_labels['qtc_interval'].setText("--/--")
 
                     # Record to session file if enabled
                     try:
@@ -2106,42 +2136,81 @@ class Dashboard(QWidget):
 
         print(" Starting PDF report generation...")
 
+        def _extract_metric(label_key, default="0", strip_units=True):
+            if not hasattr(self, 'metric_labels') or label_key not in self.metric_labels:
+                return default
+            text = self.metric_labels[label_key].text().strip()
+            if not text:
+                return default
+            if strip_units:
+                for unit in ("BPM", "bpm", "ms", "mV", "°"):
+                    text = text.replace(unit, "")
+            return text.strip() or default
+
+        def _to_int(value, default=0):
+            try:
+                return int(float(value))
+            except Exception:
+                return default
+
+        def _to_float(value, default=0.0):
+            try:
+                return float(value)
+            except Exception:
+                return default
+
         # Gather ECG data from dashboard metrics
-        HR = self.metric_labels['heart_rate'].text().split()[0] if 'heart_rate' in self.metric_labels else "88"
-        PR = self.metric_labels['pr_interval'].text().split()[0] if 'pr_interval' in self.metric_labels else "160"
-        QRS = self.metric_labels['qrs_duration'].text().split()[0] if 'qrs_duration' in self.metric_labels else "90"
+        HR_text = _extract_metric('heart_rate', "0")
+        PR_text = _extract_metric('pr_interval', "0")
+        QRS_text = _extract_metric('qrs_duration', "0")
+        qtc_label_text = _extract_metric('qtc_interval', "400/430", strip_units=False)
+        st_label_text = _extract_metric('st_interval', "", strip_units=False)
+        if not st_label_text or st_label_text == "":
+            st_label_text = _extract_metric('st_segment', "0.0 mV", strip_units=False)
         
-        # Extract QT and QTc from qtc_interval label (format: "QT/QTc" like "400/430")
-        qtc_label_text = self.metric_labels['qtc_interval'].text() if 'qtc_interval' in self.metric_labels else "400/430 ms"
-        # Remove " ms" suffix if present
-        qtc_label_text = qtc_label_text.replace(" ms", "").strip()
-        
+        QT_text = "0"
+        QTc_text = "0"
         if '/' in qtc_label_text:
-            # Split "400/430" format
-            qt_qtc_parts = qtc_label_text.split('/')
-            QT = qt_qtc_parts[0].strip() if len(qt_qtc_parts) > 0 else "400"
-            QTc = qt_qtc_parts[1].strip() if len(qt_qtc_parts) > 1 else "430"
+            parts = [part.strip().replace("ms", "").strip() for part in qtc_label_text.split('/') if part.strip()]
+            if len(parts) >= 1:
+                QT_text = parts[0]
+            if len(parts) >= 2:
+                QTc_text = parts[1]
         else:
-            # Fallback: if no "/" found, use the value as QTc and default QT
-            QT = "400"
-            QTc = qtc_label_text.strip()
+            QTc_text = qtc_label_text.strip()
+
+        ST_text = st_label_text.replace("mV", "").strip()
         
-        ST = self.metric_labels['st_segment'].text().split()[0] if 'st_segment' in self.metric_labels else "100"
+        HR = _to_int(HR_text, 0)
+        PR = _to_int(PR_text, 0)
+        QRS = _to_int(QRS_text, 0)
+        QT = _to_int(QT_text, 0)
+        QTc = _to_int(QTc_text, 0)
+        ST = _to_float(ST_text, 0.0)
+
+        if QT <= 0 and hasattr(self, 'ecg_test_page') and getattr(self.ecg_test_page, '_last_qt_ms', None):
+            QT = int(self.ecg_test_page._last_qt_ms)
+        if QTc <= 0 and hasattr(self, 'ecg_test_page') and getattr(self.ecg_test_page, '_last_qtc_ms', None):
+            QTc = int(self.ecg_test_page._last_qtc_ms)
+        QTcF = 0
+        if hasattr(self, 'ecg_test_page') and getattr(self.ecg_test_page, '_last_qtcf_ms', None):
+            QTcF = int(self.ecg_test_page._last_qtcf_ms or 0)
         
-        print(f"📊 PDF Report ECG Values - HR: {HR}, PR: {PR}, QRS: {QRS}, QT: {QT}, QTc: {QTc}, ST: {ST}")
+        print(f"📊 PDF Report ECG Values - HR: {HR}, PR: {PR}, QRS: {QRS}, QT: {QT}, QTc: {QTc}, QTcF: {QTcF}, ST: {ST}")
 
         # Prepare data for the report generator
         ecg_data = {
             "HR": 4833,  # Total heartbeats
-            "beat": int(HR) if HR.isdigit() else 88,  # Current heart rate
-            "PR": int(PR) if PR.isdigit() else 160,
-            "QRS": int(QRS) if QRS.isdigit() else 90,
-            "QT": int(QT) if QT.isdigit() else 400,
-            "QTc": int(QTc) if QTc.isdigit() else 400,
-            "ST": int(ST) if ST.isdigit() else 100,
+            "beat": HR if HR > 0 else 88,  # Current heart rate
+            "PR": PR if PR > 0 else 160,
+            "QRS": QRS if QRS > 0 else 90,
+            "QT": QT if QT > 0 else 400,
+            "QTc": QTc if QTc > 0 else 400,
+            "QTcF": QTcF if QTcF > 0 else QTc if QTc > 0 else 400,
+            "ST": ST,
             "HR_max": 136,
             "HR_min": 74,
-            "HR_avg": int(HR) if HR.isdigit() else 88,
+            "HR_avg": HR if HR > 0 else 88,
         }
 
         # --- Capture last 10 seconds of live ECG data ---
@@ -2488,21 +2557,34 @@ class Dashboard(QWidget):
         import time
         
         current_time = time.time() * 1000  # Convert to milliseconds
+        current_hr = 0
         
         # Get current heart rate from metric card
         try:
             if 'heart_rate' in self.metric_labels:
                 hr_text = self.metric_labels['heart_rate'].text()
-                if hr_text and hr_text != "-- bpm" and "bpm" in hr_text:
-                    # Extract heart rate number from text like "86 bpm"
-                    hr_str = hr_text.replace(" bpm", "").strip()
-                    if hr_str.isdigit():
-                        self.current_heart_rate = int(hr_str)
-                        # Calculate beat interval based on heart rate
+                # Normalize text (e.g., "86 bpm", "86 BPM", "86")
+                if hr_text:
+                    cleaned = hr_text.replace("BPM", "").replace("bpm", "").strip()
+                    # Treat non-numeric or placeholder values as "no data"
+                    if cleaned.isdigit():
+                        current_hr = int(cleaned)
+                        self.current_heart_rate = current_hr
                         if self.current_heart_rate > 0:
+                            # Calculate beat interval based on heart rate
                             self.beat_interval = 60000 / self.current_heart_rate  # Convert BPM to ms between beats
+                    else:
+                        # No valid heart rate available
+                        self.current_heart_rate = 0
         except Exception as e:
             print(f"⚠️ Error parsing heart rate: {e}")
+            self.current_heart_rate = 0
+        
+        # If there is no valid heart data (HR < 10 bpm or 0 / '--'), 
+        # do NOT play heartbeat sound and keep the heart static
+        if not isinstance(self.current_heart_rate, (int, float)) or self.current_heart_rate < 10:
+            # Optionally, you can keep a very subtle idle animation; here we freeze the icon
+            return
         
         # Check if it's time for a heartbeat
         if current_time - self.last_beat_time >= self.beat_interval:

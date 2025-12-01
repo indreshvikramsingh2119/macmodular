@@ -8,16 +8,13 @@ import numpy as np
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QGridLayout,
     QSizePolicy, QScrollArea, QGroupBox, QFormLayout, QLineEdit, QComboBox,
-    QMessageBox, QApplication, QDialog, QGraphicsDropShadowEffect
+    QMessageBox, QApplication, QDialog, QGraphicsDropShadowEffect, QSlider
 )
-from PyQt5.QtGui import QFont, QColor, QPalette, QPixmap, QPainter, QPen
-from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect
-import pyqtgraph as pg
+from PyQt5.QtGui import QFont, QColor
+from PyQt5.QtCore import Qt, QTimer
 from scipy.signal import find_peaks, butter, filtfilt
-import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-import matplotlib.patches as patches
 
 class PQRSTAnalyzer:
     """Analyze ECG signal to detect P, Q, R, S, T waves and calculate metrics"""
@@ -317,6 +314,142 @@ class ArrhythmiaDetector:
             
         return arrhythmias if arrhythmias else ["Unspecified Irregular Rhythm"]
     
+    def detect_arrhythmias_with_probabilities(self, signal, r_peaks, window_size=2.0):
+        """
+        Detect arrhythmias with probability scores over time windows
+        Returns a dictionary with time windows and probability scores for each arrhythmia type
+        """
+        if len(r_peaks) < 3:
+            return {}
+        
+        # Calculate RR intervals
+        rr_intervals = np.diff(r_peaks) / self.fs * 1000  # in ms
+        time_points = r_peaks[:-1] / self.fs  # Time points for each RR interval
+        
+        # Initialize heat map data structure
+        arrhythmia_types = [
+            "Normal Sinus Rhythm",
+            "Atrial Fibrillation",
+            "Ventricular Tachycardia",
+            "Premature Ventricular Contractions",
+            "Sinus Bradycardia",
+            "Sinus Tachycardia",
+            "Irregular Rhythm"
+        ]
+        
+        heat_map_data = {arr_type: [] for arr_type in arrhythmia_types}
+        
+        # Analyze in sliding windows
+        window_samples = int(window_size * self.fs)
+        num_windows = max(1, len(signal) // window_samples)
+        
+        for i in range(num_windows):
+            start_idx = i * window_samples
+            end_idx = min((i + 1) * window_samples, len(signal))
+            window_signal = signal[start_idx:end_idx]
+            window_time = (start_idx + end_idx) / (2 * self.fs)
+            
+            # Find R peaks in this window
+            window_r_peaks = [r for r in r_peaks if start_idx <= r < end_idx]
+            
+            if len(window_r_peaks) < 2:
+                # Insufficient data - assign low probabilities
+                for arr_type in arrhythmia_types:
+                    heat_map_data[arr_type].append((window_time, 0.0))
+                continue
+            
+            window_rr = np.diff(window_r_peaks) / self.fs * 1000
+            
+            # Calculate probabilities for each arrhythmia type
+            prob_nsr = self._prob_normal_sinus_rhythm(window_rr)
+            prob_afib = self._prob_atrial_fibrillation(window_signal, window_r_peaks)
+            prob_vt = self._prob_ventricular_tachycardia(window_rr)
+            prob_pvc = self._prob_premature_ventricular_contractions(window_signal, window_r_peaks)
+            prob_brady = self._prob_bradycardia(window_rr)
+            prob_tachy = self._prob_tachycardia(window_rr)
+            
+            # Normalize probabilities so they sum to 1.0
+            probs = [prob_nsr, prob_afib, prob_vt, prob_pvc, prob_brady, prob_tachy]
+            total = sum(probs)
+            if total > 0:
+                probs = [p / total for p in probs]
+            else:
+                probs = [1.0/len(probs)] * len(probs)  # Equal probability if all zero
+            
+            # Store probabilities
+            heat_map_data["Normal Sinus Rhythm"].append((window_time, probs[0]))
+            heat_map_data["Atrial Fibrillation"].append((window_time, probs[1]))
+            heat_map_data["Ventricular Tachycardia"].append((window_time, probs[2]))
+            heat_map_data["Premature Ventricular Contractions"].append((window_time, probs[3]))
+            heat_map_data["Sinus Bradycardia"].append((window_time, probs[4]))
+            heat_map_data["Sinus Tachycardia"].append((window_time, probs[5]))
+            heat_map_data["Irregular Rhythm"].append((window_time, 1.0 - prob_nsr))
+        
+        return heat_map_data
+    
+    def _prob_normal_sinus_rhythm(self, rr_intervals):
+        """Calculate probability of normal sinus rhythm"""
+        if len(rr_intervals) < 3:
+            return 0.0
+        mean_hr = 60000 / np.mean(rr_intervals)
+        std_rr = np.std(rr_intervals)
+        if 60 <= mean_hr <= 100 and std_rr < 120:
+            return 0.9
+        elif 50 <= mean_hr <= 110 and std_rr < 150:
+            return 0.5
+        return 0.1
+    
+    def _prob_atrial_fibrillation(self, signal, r_peaks):
+        """Calculate probability of atrial fibrillation"""
+        if len(r_peaks) < 10:
+            return 0.0
+        rr_intervals = np.diff(r_peaks)
+        cv = np.std(rr_intervals) / np.mean(rr_intervals) if np.mean(rr_intervals) > 0 else 0
+        if cv > 0.15:
+            return min(0.95, 0.5 + (cv - 0.15) * 2.0)
+        return max(0.0, 0.5 - cv * 2.0)
+    
+    def _prob_ventricular_tachycardia(self, rr_intervals):
+        """Calculate probability of ventricular tachycardia"""
+        if len(rr_intervals) < 3:
+            return 0.0
+        mean_hr = 60000 / np.mean(rr_intervals)
+        std_rr = np.std(rr_intervals)
+        if mean_hr > 120 and std_rr < 40:
+            return min(0.95, 0.7 + (mean_hr - 120) / 200)
+        return 0.1
+    
+    def _prob_premature_ventricular_contractions(self, signal, r_peaks):
+        """Calculate probability of PVCs"""
+        if len(r_peaks) < 5:
+            return 0.0
+        rr_intervals = np.diff(r_peaks) / self.fs
+        mean_rr = np.mean(rr_intervals)
+        pvc_count = 0
+        for i in range(len(rr_intervals)):
+            if rr_intervals[i] < 0.8 * mean_rr:
+                if i + 1 < len(rr_intervals) and rr_intervals[i+1] > 1.2 * mean_rr:
+                    pvc_count += 1
+        return min(0.95, pvc_count / len(rr_intervals) * 2.0)
+    
+    def _prob_bradycardia(self, rr_intervals):
+        """Calculate probability of bradycardia"""
+        if len(rr_intervals) < 3:
+            return 0.0
+        mean_hr = 60000 / np.mean(rr_intervals)
+        if mean_hr < 60:
+            return min(0.95, 0.5 + (60 - mean_hr) / 60)
+        return 0.1
+    
+    def _prob_tachycardia(self, rr_intervals):
+        """Calculate probability of tachycardia"""
+        if len(rr_intervals) < 3:
+            return 0.0
+        mean_hr = 60000 / np.mean(rr_intervals)
+        if mean_hr > 100:
+            return min(0.95, 0.5 + (mean_hr - 100) / 200)
+        return 0.1
+    
     def _is_normal_sinus_rhythm(self, rr_intervals):
         """Check if rhythm is normal sinus rhythm"""
         if len(rr_intervals) < 3: return False
@@ -387,15 +520,47 @@ class ExpandedLeadView(QDialog):
 
         # Store the baseline (mean) of the signal for proper zooming
         self.signal_baseline = 0.0
+
+        # Store detected arrhythmia events as (time_seconds, label)
+        self.arrhythmia_events = []
         
+        # Heat map + history view state
+        self.heatmap_overlay = None
+        self.heatmap_time_axis = None
+        self.heatmap_window_step = 1.0
+
+        # History view widgets (initialized later)
+        self.history_slider = None
+        self.history_slider_label = None
+        self.history_slider_frame = None
+        self.view_window_duration = 10.0  # seconds visible at once
+        self.view_window_offset = 0.0
+        self.manual_view = False
+        self.history_slider_active = False
+
         # Live data update
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_live_data)
         self.is_live = False
         
         self.setWindowTitle(f"Detailed Analysis - {lead_name}")
-        self.setMinimumSize(1100, 700)
-        self.resize(1400, 900)
+        # Make dialog responsive from ~13\" laptops up to 27\" monitors
+        try:
+            from PyQt5.QtWidgets import QApplication
+            screen = QApplication.primaryScreen()
+            if screen is not None:
+                geom = screen.availableGeometry()
+                # Use 80% of screen size for initial window
+                w = int(geom.width() * 0.8)
+                h = int(geom.height() * 0.8)
+                self.resize(max(960, w), max(600, h))
+            else:
+                # Fallback if screen info not available
+                self.resize(1280, 720)
+        except Exception:
+            self.resize(1280, 720)
+        # Reasonable minimum to keep layout usable on small screens
+        self.setMinimumSize(960, 600)
         self.setStyleSheet("""
             QDialog {
                 background-color: #f0f2f5;
@@ -530,8 +695,9 @@ class ExpandedLeadView(QDialog):
         self.setup_ecg_plot()
         
         self.canvas = FigureCanvas(self.fig)
+        # Let the canvas grow/shrink with the window instead of forcing a large minimum
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.canvas.setMinimumSize(700, 420)
+        self.canvas.setMinimumSize(500, 320)
         plot_layout.addWidget(self.canvas)
 
         # --- AMPLIFICATION CONTROLS ---
@@ -649,62 +815,106 @@ class ExpandedLeadView(QDialog):
         startstop_layout = QHBoxLayout()
         startstop_layout.addStretch()
         
-        # Start Button for Expanded Lead View
-        self.expanded_start_btn = QPushButton("Start")
-        self.expanded_start_btn.setMinimumSize(100, 40)
-        self.expanded_start_btn.setStyleSheet("""
+        # Use the same green button style as the main ECG test page for visual consistency
+        green_btn_style = """
             QPushButton {
-                background: #28a745; 
-                color: white; 
-                border-radius: 8px;
-                padding: 8px 16px;
-                font-weight: bold; 
-                font-size: 11pt;
-                border: 2px solid #218838;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #4CAF50, stop:1 #45a049);
+                color: white;
+                border: 2px solid #4CAF50;
+                border-radius: 6px;
+                padding: 4px 12px;
+                font-size: 10px;
+                font-weight: bold;
+                text-align: center;
             }
-            QPushButton:hover { 
-                background: #218838; 
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #45a049, stop:1 #4CAF50);
+                border: 2px solid #45a049;
+                color: white;
             }
             QPushButton:pressed {
-                background: #1e7e34;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #3d8b40, stop:1 #357a38);
+                border: 2px solid #3d8b40;
+                color: white;
             }
             QPushButton:disabled {
                 background: #6c757d;
                 border: 2px solid #6c757d;
+                color: #eeeeee;
             }
-        """)
+        """
+
+        # Start Button for Expanded Lead View
+        self.expanded_start_btn = QPushButton("Start")
+        self.expanded_start_btn.setMinimumSize(90, 34)
+        self.expanded_start_btn.setMaximumHeight(36)
+        self.expanded_start_btn.setStyleSheet(green_btn_style)
         self.expanded_start_btn.clicked.connect(self.start_parent_acquisition)
         startstop_layout.addWidget(self.expanded_start_btn)
         
-        # Stop Button for Expanded Lead View
+        # Stop Button for Expanded Lead View (same style and size)
         self.expanded_stop_btn = QPushButton("Stop")
-        self.expanded_stop_btn.setMinimumSize(100, 40)
-        self.expanded_stop_btn.setStyleSheet("""
-            QPushButton {
-                background: #dc3545; 
-                color: white; 
-                border-radius: 8px;
-                padding: 8px 16px;
-                font-weight: bold; 
-                font-size: 11pt;
-                border: 2px solid #c82333;
-            }
-            QPushButton:hover { 
-                background: #c82333; 
-            }
-            QPushButton:pressed {
-                background: #bd2130;
-            }
-            QPushButton:disabled {
-                background: #6c757d;
-                border: 2px solid #6c757d;
-            }
-        """)
+        self.expanded_stop_btn.setMinimumSize(90, 34)
+        self.expanded_stop_btn.setMaximumHeight(36)
+        self.expanded_stop_btn.setStyleSheet(green_btn_style)
         self.expanded_stop_btn.clicked.connect(self.stop_parent_acquisition)
         startstop_layout.addWidget(self.expanded_stop_btn)
         
         plot_layout.addLayout(startstop_layout)
         
+        # History slider container (initially hidden until acquisition stops)
+        history_frame = QFrame()
+        history_frame.setStyleSheet("""
+            QFrame {
+                background: transparent;
+                border: none;
+            }
+        """)
+        history_layout = QHBoxLayout(history_frame)
+        history_layout.setContentsMargins(0, 5, 0, 5)
+        history_layout.setSpacing(10)
+
+        history_label = QLabel("History View:")
+        history_label.setStyleSheet("color: #2c3e50; font-weight: bold; font-size: 11pt;")
+        history_layout.addWidget(history_label)
+
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(0, 0)
+        slider.setSingleStep(10)
+        slider.setPageStep(100)
+        slider.setTickPosition(QSlider.TicksBelow)
+        slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                border: 1px solid #bbb;
+                background: #f5f5f5;
+                height: 6px;
+                border-radius: 4px;
+            }
+            QSlider::handle:horizontal {
+                background: #3498db;
+                border: 1px solid #1f78b4;
+                width: 14px;
+                margin: -6px 0;
+                border-radius: 7px;
+            }
+        """)
+        slider.valueChanged.connect(self.on_history_slider_changed)
+        history_layout.addWidget(slider, 1)
+
+        history_value = QLabel("LIVE")
+        history_value.setStyleSheet("color: #7f8c8d; font-size: 10pt; font-weight: bold;")
+        history_layout.addWidget(history_value)
+
+        history_frame.setVisible(False)
+        plot_layout.addWidget(history_frame)
+
+        self.history_slider = slider
+        self.history_slider_label = history_value
+        self.history_slider_frame = history_frame
+
         plot_layout.addWidget(control_frame)
         
         parent_layout.addWidget(plot_frame, 7) # Plot takes ~70% of horizontal space
@@ -754,7 +964,7 @@ class ExpandedLeadView(QDialog):
         
         self.ax.plot(time, scaled, color='#0984e3', linewidth=1.0, label='ECG Signal')
         
-        self.ax.set_xlabel('Time (seconds)', fontsize=14, fontweight='bold', color='#34495e')
+        # self.ax.set_xlabel('Time (seconds)', fontsize=14, fontweight='bold', color='#34495e')
         self.ax.set_ylabel('Amplitude (mV)', fontsize=14, fontweight='bold', color='#34495e')
         self.ax.set_title(f'Lead {self.lead_name} - PQRST Analysis', fontsize=18, fontweight='bold', color='#2c3e50')
         
@@ -840,9 +1050,8 @@ class ExpandedLeadView(QDialog):
     
     def create_metrics_cards(self):
         """Create individual metric cards"""
-        # Include Heart Rate and R-R Interval display as requested
+        # Metrics displayed in expanded view (Heart Rate is not shown here)
         metrics = [
-            ("Heart Rate", 0, "bpm", "#e74c3c"),
             ("RR Interval", 0, "ms", "#2980b9"),
             ("PR Interval", 0, "ms", "#8e44ad"),
             ("QRS Duration", 0, "ms", "#27ae60"),
@@ -857,8 +1066,7 @@ class ExpandedLeadView(QDialog):
         # Add a stretch at the end
         self.metrics_vbox.addStretch(1)
         
-        # Initialize with some default values for testing
-        self.update_metric('heart_rate', 0)
+        # Initialize with some default values for testing (only for visible metrics)
         self.update_metric('rr_interval', 0)
         self.update_metric('pr_interval', 0)
         self.update_metric('qrs_duration', 0)
@@ -917,8 +1125,12 @@ class ExpandedLeadView(QDialog):
                     new_data = parent.data[lead_index]
                     if len(new_data) > 0:
                         self.ecg_data = np.array(new_data)
-                        self.update_plot()
+                        if not self.manual_view:
+                            total_duration = len(self.ecg_data) / max(1.0, self.sampling_rate)
+                            self.view_window_offset = max(0.0, total_duration - self.view_window_duration)
                         self.analyze_ecg()
+                        self.update_plot()
+                        self.update_history_slider()
 
                         # Update button states to reflect parent's status
                         if hasattr(self, 'expanded_start_btn'):
@@ -941,55 +1153,108 @@ class ExpandedLeadView(QDialog):
             return
         
         try:
-            # Clear the plot
-            self.ax.clear()
-            
-            # Apply amplification around the baseline, not around 0
-            # This keeps the signal centered during zoom
-            time = np.arange(len(self.ecg_data)) / self.sampling_rate
-            base_scaled = self.ecg_data * self.display_gain
-            
-            # Update baseline if data changed
+            total_samples = len(self.ecg_data)
+            window_samples = max(1, int(self.view_window_duration * self.sampling_rate))
+            if window_samples > total_samples:
+                window_samples = total_samples
+
+            total_duration = total_samples / max(1.0, self.sampling_rate)
+            max_offset = max(0.0, total_duration - self.view_window_duration)
+            if not self.manual_view:
+                self.view_window_offset = max_offset
+            else:
+                self.view_window_offset = min(self.view_window_offset, max_offset)
+
+            start_idx = int(self.view_window_offset * self.sampling_rate)
+            end_idx = min(total_samples, start_idx + window_samples)
+            if end_idx - start_idx <= 1:
+                return
+
+            window_signal = self.ecg_data[start_idx:end_idx]
+            time = np.arange(start_idx, end_idx) / self.sampling_rate
+            base_scaled = window_signal * self.display_gain
             self.signal_baseline = np.mean(base_scaled)
-            
-            # Zoom around the baseline: baseline + (signal - baseline) * amplification
             scaled = self.signal_baseline + (base_scaled - self.signal_baseline) * self.amplification
-            
-            self.ax.plot(time, scaled, color='#0984e3', linewidth=1.0, label='ECG Signal')
-            
-            # Update labels and styling
-            self.ax.set_xlabel('Time (seconds)', fontsize=14, fontweight='bold', color='#34495e')
+
+            # Determine y-limits once based on entire dataset for consistent scaling
+            if self.fixed_ylim is None and len(self.ecg_data) > 0:
+                baseline_full = self.ecg_data * self.display_gain
+                y_margin = (np.max(baseline_full) - np.min(baseline_full)) * 0.15 if np.max(baseline_full) != np.min(baseline_full) else 1.0
+                y_min = np.min(baseline_full) - y_margin
+                y_max = np.max(baseline_full) + y_margin
+                self.fixed_ylim = (y_min, y_max)
+
+            self.ax.clear()
+
+            # Heat map overlay behind waveform
+            if (
+                self.heatmap_overlay is not None
+                and self.heatmap_time_axis is not None
+                and len(self.heatmap_time_axis) > 0
+                and self.fixed_ylim is not None
+            ):
+                window_half = max(0.001, self.heatmap_window_step / 2.0)
+                extent = [
+                    self.heatmap_time_axis[0] - window_half,
+                    self.heatmap_time_axis[-1] + window_half,
+                    self.fixed_ylim[0],
+                    self.fixed_ylim[1]
+                ]
+                self.ax.imshow(
+                    self.heatmap_overlay,
+                    extent=extent,
+                    aspect='auto',
+                    origin='lower',
+                    interpolation='nearest',
+                    zorder=0,
+                )
+
+            self.ax.plot(time, scaled, color='#0984e3', linewidth=1.0, label='ECG Signal', zorder=1)
+
+            # Overlay vertical markers at detected arrhythmia event times within the visible window
+            if hasattr(self, "arrhythmia_events") and self.arrhythmia_events:
+                t_start, t_end = time[0], time[-1]
+                for evt_time, evt_label in self.arrhythmia_events:
+                    if t_start <= evt_time <= t_end:
+                        # Vertical dashed red line
+                        self.ax.axvline(evt_time, color="#e74c3c", linestyle="--", linewidth=1.0, alpha=0.9, zorder=2)
+                        # Small label at the top of the plot
+                        try:
+                            ylim = self.fixed_ylim if self.fixed_ylim is not None else self.ax.get_ylim()
+                            y_top = ylim[1]
+                            self.ax.text(
+                                evt_time,
+                                y_top,
+                                "★",
+                                color="#e74c3c",
+                                fontsize=10,
+                                fontweight="bold",
+                                ha="center",
+                                va="bottom",
+                                zorder=3,
+                            )
+                        except Exception:
+                            pass
+
+            # Remove explicit X-axis label ("Time (seconds)") to match dashboard style
             self.ax.set_ylabel('Amplitude (mV)', fontsize=14, fontweight='bold', color='#34495e')
-            # Show amplification in title
             amp_text = f" (Zoom: {self.amplification:.2f}x)" if self.amplification != 1.0 else ""
-            self.ax.set_title(f'Lead {self.lead_name} - Live PQRST Analysis{amp_text}', 
-                            fontsize=18, fontweight='bold', color='#2c3e50')
-            
-            # Grid and styling
+            self.ax.set_title(
+                f'Lead {self.lead_name} - Live PQRST Analysis{amp_text}',
+                fontsize=18,
+                fontweight='bold',
+                color='#2c3e50'
+            )
+
             self.ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='#bdc3c7')
             self.ax.spines['top'].set_visible(False)
             self.ax.spines['right'].set_visible(False)
-            
-            # Set x limits
-            self.ax.set_xlim(0, max(time) if len(time) > 0 else 1)
-            
-            # FIXED Y-AXIS: Always use the same y-limits regardless of amplification
-            # This makes the wave appear to zoom in/out while staying centered
+            self.ax.set_xlim(time[0], time[-1])
+
             if self.fixed_ylim is not None:
                 self.ax.set_ylim(self.fixed_ylim[0], self.fixed_ylim[1])
-            elif len(self.ecg_data) > 0 and self.fixed_ylim is None:
-                # Fallback: calculate and store fixed limits if not set
-                baseline_scaled = self.ecg_data * self.display_gain * 1.0
-                self.signal_baseline = np.mean(baseline_scaled)
-                y_margin = (np.max(baseline_scaled) - np.min(baseline_scaled)) * 0.1
-                y_min = np.min(baseline_scaled) - y_margin
-                y_max = np.max(baseline_scaled) + y_margin
-                self.fixed_ylim = (y_min, y_max)
-                self.ax.set_ylim(y_min, y_max)
-            
-            # Redraw
+
             self.canvas.draw()
-            
         except Exception as e:
             print(f"Error updating plot: {e}")
     
@@ -1024,6 +1289,10 @@ class ExpandedLeadView(QDialog):
                 # Ensure live mode is active for this view
                 if not self.is_live:
                     self.start_live_mode()
+                self.history_slider_active = False
+                self.manual_view = False
+                if self.history_slider_frame:
+                    self.history_slider_frame.setVisible(False)
                     
                 print("✅ Acquisition started successfully from expanded view")
             else:
@@ -1042,6 +1311,12 @@ class ExpandedLeadView(QDialog):
             if parent and hasattr(parent, 'stop_acquisition'):
                 print("⏹️ Stopping acquisition from expanded lead view...")
                 parent.stop_acquisition()
+                self.stop_live_mode()
+                self.history_slider_active = True
+                self.manual_view = False
+                if self.history_slider_frame:
+                    self.history_slider_frame.setVisible(True)
+                self.update_history_slider()
                 
                 # Update button states
                 self.expanded_start_btn.setEnabled(True)
@@ -1135,10 +1410,18 @@ class ExpandedLeadView(QDialog):
             arrhythmias = self.arrhythmia_detector.detect_arrhythmias(self.ecg_data, analysis['r_peaks'])
             self.update_arrhythmia_display(arrhythmias)
             
+            # Generate heat map data
+            heat_map_data = self.arrhythmia_detector.detect_arrhythmias_with_probabilities(
+                self.ecg_data, analysis['r_peaks'], window_size=2.0
+            )
+            self.prepare_heatmap_overlay(heat_map_data)
+            
             self.update_plot_with_markers(analysis)
         except Exception as e:
             print(f"Error in ECG analysis: {e}")
             self.arrhythmia_list.setText("An error occurred during analysis.")
+            import traceback
+            traceback.print_exc()
     
     def calculate_metrics(self, analysis):
         """Calculate ECG metrics from analysis results"""
@@ -1195,16 +1478,59 @@ class ExpandedLeadView(QDialog):
                 if qrs_durations:
                     self.update_metric('qrs_duration', int(np.mean(qrs_durations)))
             
-            # QTc Interval (Bazett's formula)
+            # QTc Interval (Bazett's formula) using measured QT (if available)
             if 'rr_interval' in self.metrics_cards and self.metrics_cards['rr_interval'].value > 0:
                 rr_sec = self.metrics_cards['rr_interval'].value / 1000.0
-                # Simplified QT, actual QT needs T-wave end detection
-                qt_interval_ms = 380 # Assuming a typical QT
-                qtc = qt_interval_ms / np.sqrt(rr_sec) if rr_sec > 0 else 0
-                self.update_metric('qtc_interval', int(qtc))
+                # Estimate QT as mean (T − Q) over detected beats
+                qt_intervals = []
+                for q_idx, t_idx in zip(q_peaks, t_peaks):
+                    if t_idx > q_idx:
+                        qt_ms = (t_idx - q_idx) / self.sampling_rate * 1000.0
+                        # Accept only physiologic QT (e.g., 240–520 ms)
+                        if 240.0 <= qt_ms <= 520.0:
+                            qt_intervals.append(qt_ms)
+                if qt_intervals and rr_sec > 0:
+                    qt_interval_ms = float(np.median(qt_intervals))
+                    qtc = qt_interval_ms / np.sqrt(rr_sec)
+                    self.update_metric('qtc_interval', int(round(qtc)))
 
-            # P Duration (simplified)
-            self.update_metric('p_duration', 80) # Typical duration
+            # P Duration (estimate from P-wave width around detected P peaks)
+            try:
+                if len(p_peaks) > 0:
+                    filtered = self.analyzer._filter_signal(self.ecg_data)
+                    p_durations = []
+                    for p_idx in p_peaks:
+                        # Examine a window of ±80 ms around the P-peak
+                        half_win = int(0.08 * self.sampling_rate)
+                        start = max(0, p_idx - half_win)
+                        end = min(len(filtered) - 1, p_idx + half_win)
+                        if end <= start + 2:
+                            continue
+                        segment = filtered[start:end]
+                        # Local baseline and peak amplitude
+                        baseline = np.median(segment)
+                        peak_rel = int(np.argmax(np.abs(segment - baseline)))
+                        peak_val = segment[peak_rel]
+                        amp = np.abs(peak_val - baseline)
+                        if amp <= 0:
+                            continue
+                        # Threshold at 20% of peak above baseline
+                        thresh = 0.2 * amp
+                        # Search left for onset
+                        left = peak_rel
+                        while left > 0 and np.abs(segment[left] - baseline) > thresh:
+                            left -= 1
+                        # Search right for offset
+                        right = peak_rel
+                        while right < len(segment) - 1 and np.abs(segment[right] - baseline) > thresh:
+                            right += 1
+                        dur_samples = max(1, right - left)
+                        p_durations.append(dur_samples * 1000.0 / self.sampling_rate)
+                    if p_durations:
+                        self.update_metric('p_duration', int(round(np.median(p_durations))))
+            except Exception as _:
+                # Fallback if anything fails; do not block other metrics
+                pass
             
         except Exception as e:
             print(f"Error calculating metrics: {e}")
@@ -1249,9 +1575,115 @@ class ExpandedLeadView(QDialog):
         except Exception as e:
             print(f"Error updating plot markers: {e}")
 
+    def prepare_heatmap_overlay(self, heat_map_data):
+        """Convert arrhythmia probabilities into a background overlay and record event times."""
+        # Clear previous events each time we recompute the heatmap
+        self.arrhythmia_events = []
+
+        colors = {
+            "Normal Sinus Rhythm": "#2ecc71",
+            "Atrial Fibrillation": "#e74c3c",
+            "Ventricular Tachycardia": "#8e44ad",
+            "Premature Ventricular Contractions": "#f39c12",
+            "Sinus Bradycardia": "#3498db",
+            "Sinus Tachycardia": "#e67e22",
+            "Irregular Rhythm": "#95a5a6"
+        }
+        arrhythmia_types = list(colors.keys())
+
+        if not heat_map_data:
+            self.heatmap_overlay = None
+            self.heatmap_time_axis = None
+            return
+
+        base_series = None
+        for arr_type in arrhythmia_types:
+            if arr_type in heat_map_data and heat_map_data[arr_type]:
+                base_series = heat_map_data[arr_type]
+                break
+
+        if not base_series:
+            self.heatmap_overlay = None
+            self.heatmap_time_axis = None
+            return
+
+        num_windows = len(base_series)
+        overlay = np.ones((120, num_windows, 4))
+        time_axis = []
+
+        for idx in range(num_windows):
+            time_value = base_series[idx][0] if idx < len(base_series) else idx * 2.0
+            time_axis.append(time_value)
+            
+            best_type = "Irregular Rhythm"
+            best_prob = 0.0
+            for arr_type in arrhythmia_types:
+                arr_list = heat_map_data.get(arr_type, [])
+                if idx < len(arr_list):
+                    _, prob = arr_list[idx]
+                    if prob > best_prob:
+                        best_prob = prob
+                        best_type = arr_type
+
+            color_hex = colors.get(best_type, "#95a5a6")
+            rgb = tuple(int(color_hex[i:i+2], 16) / 255.0 for i in (1, 3, 5))
+            opacity = 0.2 + 0.8 * max(0.0, min(1.0, best_prob))
+            overlay[:, idx, 0] = rgb[0]
+            overlay[:, idx, 1] = rgb[1]
+            overlay[:, idx, 2] = rgb[2]
+            overlay[:, idx, 3] = opacity
+
+            # Record an arrhythmia event when a non-normal rhythm dominates this window
+            if best_type != "Normal Sinus Rhythm" and best_prob >= 0.7:
+                self.arrhythmia_events.append((float(time_value), best_type))
+
+        self.heatmap_overlay = overlay
+        self.heatmap_time_axis = np.array(time_axis)
+        if len(self.heatmap_time_axis) > 1:
+            diffs = np.diff(self.heatmap_time_axis)
+            self.heatmap_window_step = max(0.1, float(np.median(diffs)))
+        else:
+            self.heatmap_window_step = 2.0
+
+    def update_history_slider(self):
+        """Adjust slider bounds to match available history"""
+        if not hasattr(self, 'history_slider'):
+            return
+        total_duration = len(self.ecg_data) / max(1.0, self.sampling_rate)
+        max_offset = max(0.0, total_duration - self.view_window_duration)
+        slider_max = int(max_offset * 1000)
+        current_val = int(min(self.view_window_offset, max_offset) * 1000)
+        self.history_slider.blockSignals(True)
+        self.history_slider.setMaximum(slider_max)
+        self.history_slider.setValue(current_val)
+        self.history_slider.blockSignals(False)
+
+        if self.history_slider_label:
+            if not self.history_slider_active:
+                self.history_slider_label.setText("LIVE")
+            else:
+                start_time = min(self.view_window_offset, max_offset)
+                end_time = min(start_time + self.view_window_duration, total_duration)
+                self.history_slider_label.setText(f"{start_time:0.1f}s – {end_time:0.1f}s")
+
+    def on_history_slider_changed(self, value):
+        """Scroll through historical data when acquisition is stopped"""
+        if not self.history_slider_active:
+            return
+        self.manual_view = True
+        self.view_window_offset = value / 1000.0
+        self.update_plot()
+        if self.history_slider_label:
+            total_duration = len(self.ecg_data) / max(1.0, self.sampling_rate)
+            start_time = max(0.0, min(self.view_window_offset, total_duration))
+            end_time = min(start_time + self.view_window_duration, total_duration)
+            self.history_slider_label.setText(f"{start_time:0.1f}s – {end_time:0.1f}s")
+
 def show_expanded_lead_view(lead_name, ecg_data, sampling_rate=500, parent=None):
     """Show the expanded lead view dialog"""
     dialog = ExpandedLeadView(lead_name, ecg_data, sampling_rate, parent)
+    # Open maximized by default for best visibility on any monitor
+    dialog.showMaximized()
     dialog.exec_()
 
 if __name__ == "__main__":
@@ -1274,6 +1706,6 @@ if __name__ == "__main__":
     sample_ecg = p_wave + qrs_complex + t_wave + noise
     
     dialog = ExpandedLeadView("Lead II", sample_ecg, fs)
-    dialog.show()
+    dialog.showMaximized()
     
     sys.exit(app.exec_())

@@ -269,7 +269,7 @@ class LoginRegisterDialog(QDialog):
         login_row = QHBoxLayout()
         
         login_row.addStretch(1)
-        login_lbl = QLabel("Already have an account?")
+        login_lbl = QLabel("Already 33have an account?")
         login_lbl.setStyleSheet("color: #fff; font-size: 15px;")
         login_btn = QPushButton("Login")
         login_btn.setStyleSheet("color: #ff6600; background: transparent; border: none; font-size: 15px; font-weight: bold; text-decoration: underline;")

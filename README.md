@@ -110,6 +110,152 @@ python main.py
 7. **View PQRST labeling** and detailed metrics for individual leads
 8. **Monitor arrhythmia detection** in real-time
 
+## ECG Application Logic Overview
+
+This section gives a single-page overview of how the main pieces of the app work: sign‑up/auth, the dashboard, 12‑lead processing, and the expanded lead analysis.
+
+### 1. Sign‑Up & Login Logic
+
+- **Dialog class**: `LoginRegisterDialog` in `src/main.py`.
+- **Sign‑up flow**:
+  - Fields: Machine Serial ID, Full Name, Age, Gender, Address, Phone, Password, Confirm Password.
+  - Validation:
+    - All fields required.
+    - Password and Confirm Password must match.
+  - Registration call:
+    - Uses `self.sign_in_logic.register_user_with_details(...)` to persist the new user.
+    - Username = phone number, with uniqueness enforced on serial/full name/phone.
+  - On successful registration:
+    - Shows a success dialog and returns to the login tab.
+    - Sends a background cloud upload (via `utils.cloud_uploader`) with user demographics and serial ID.
+- **Login flow**:
+  - Accepts either full name / username / phone + password, or an admin shortcut (`admin` / `adminsd`).
+  - Uses `sign_in_user_allow_serial(...)` to verify credentials.
+  - On success, looks up the user record, stores it in `login.user_details`, and sets the crash‑logger machine serial (`MACHINE_SERIAL_ID`) for error tagging.
+
+### 2. Dashboard Logic (What the Dashboard Does)
+
+- **Main dashboard class**: `Dashboard` in `src/dashboard/dashboard.py`.
+- **Key responsibilities**:
+  - Display **live metrics** at the top: HR, PR, QRS, Axis, ST, QT/QTc, elapsed Time.
+  - Show **12 real‑time leads** using PyQtGraph (fed by `ECGTestPage` in `src/ecg/twelve_lead_test.py`).
+  - Host the right‑hand sliding **control panels**:
+    - *Save ECG Details*
+    - *Working Mode* (wave speed, wave gain, sampling mode)
+    - *System Setup*, *Printer Setup*, *Filter*, etc.
+  - Manage the **Recent Reports** list using `reports/index.json`.
+  - Provide buttons for **Start / Stop / Ports / Generate Report / 12:1 / 6:2 / Back**.
+- **Live metric update flow**:
+  - `ECGTestPage` computes metrics in `calculate_ecg_metrics()` and exposes them via `get_current_metrics()`.
+  - `Dashboard.update_dashboard_metrics_from_ecg(...)` pulls those metrics and updates the top cards.
+  - Heart rate on the dashboard has its own smoothing in `calculate_dashboard_metrics(...)` with a valid range of **10–300 bpm** and R‑R‑interval filtering (default 250 Hz).
+- **Heartbeat animation & sound**:
+  - `animate_heartbeat()` reads the “HR bpm” label, converts to a numeric value, and:
+    - Adjusts the animation phase/beat interval (`beat_interval = 60000 / HR`).
+    - Plays a QSound heartbeat only if HR ≥ 10 and valid data is present.
+
+### 3. 12‑Lead Processing Logic
+
+- **Core class**: `ECGTestPage` in `src/ecg/twelve_lead_test.py`.
+- **Hardware data**:
+  - `SerialECGReader.read_value()` reads either:
+    - A single integer value, or
+    - An 8‑channel packet: `[L1, V4, V5, Lead II, V3, V6, V1, V2]`.
+  - `calculate_12_leads_from_8_channels(channel_data)` maps this into the standard 12‑lead set.
+- **Lead derivation formulas** (calculated safely with fallbacks):
+  - Primary limb leads:
+    - \( I = L1 \)
+    - \( II = \text{Lead 2} \)
+    - \( III = II - I \)
+  - Augmented leads (per standard Einthoven/Goldberger):
+    - \( \mathrm{aVR} = -\frac{I + II}{2} \)
+    - \( \mathrm{aVL} = \frac{I - III}{2} \)
+    - \( \mathrm{aVF} = \frac{II + III}{2} \)
+  - Precordial leads:
+    - `V1`, `V2`, `V3`, `V4`, `V5`, `V6` are taken directly from their hardware channels.
+- **Heart‑rate logic (10–300 bpm)**:
+  - `calculate_heart_rate(lead_data)`:
+    - Band‑pass filters Lead II (0.5–40 Hz, default 250 Hz).
+    - Uses `scipy.signal.find_peaks` with **three strategies**:
+      - Conservative (low BPM, wide distance),
+      - Normal (60–200 bpm),
+      - Tight (high BPM, up to 300 bpm).
+    - Converts peak indices to R‑R intervals (ms):
+      - \( \mathrm{RR\_ms} = \Delta\text{peaks} \times 1000 / fs \)
+      - Only keeps 200–6000 ms (10–300 bpm).
+    - Heart rate:
+      - \( \mathrm{HR} = 60000 / \mathrm{median}(RR\_\mathrm{valid}) \)
+      - Clamped to [10, 300].
+    - Additional guards reject obvious noise (inconsistent RR, too few peaks for very high BPM, etc.) and use a smoothed median buffer (`_bpm_smooth_buffer`) to avoid flicker.
+- **Other 12‑lead metrics**:
+  - **PR interval** (`calculate_pr_interval`):
+    - Filters Lead II and scans 40–250 ms before each R to find P‑wave onset.
+    - Computes PR in ms from last valid beat, returns ~150 ms by default if not measurable.
+  - **QRS duration** (`calculate_qrs_duration`):
+    - Uses an 80 ms window around R to locate Q and S minima.
+    - QRS duration:
+      - \( \mathrm{QRS\_ms} = (S - Q)/fs \times 1000 \)
+      - Typically 80–120 ms.
+  - **QRS axis** (`calculate_qrs_axis`):
+    - Uses instantaneous values of Leads I and aVF:
+      - \( \text{axis} = \arctan2(\mathrm{aVF}, I) \times 180/\pi \).
+  - **ST segment** (`calculate_st_interval`):
+    - Filters Lead II, finds R, estimates J‑point at R+40 ms, measures ST at J+60 ms.
+    - Expressed in a normalized unit (scaled by local standard deviation) and clamped to a reasonable range.
+  - **QT & QTc**:
+    - `calculate_qt_interval`:
+      - Finds Q up to 40 ms before R.
+      - Finds T‑end as the point where the signal returns near baseline within 500 ms after R.
+      - QT in ms:
+        - \( \mathrm{QT\_ms} \in [200,600] \) if valid.
+    - `calculate_qtc_interval(heart_rate, qt_interval)`:
+      - Bazett’s formula:
+        - \( \mathrm{QTc} = \frac{QT}{\sqrt{RR}} \), where \( RR = 60/\mathrm{HR} \) (seconds).
+        - Returns QTc in ms.
+
+### 4. Expanded Lead Logic (PQRST + Arrhythmia)
+
+- **Module**: `src/ecg/expanded_lead_view.py`.
+- **Main dialog class**: `ExpandedLeadView(QDialog)`:
+  - Opens when you click a lead in the 12‑lead view.
+  - Shows:
+    - A large Matplotlib waveform for one lead.
+    - Right‑side cards: Heart Rate, RR Interval, PR Interval, QRS Duration, QT/QTc, Arrhythmia text.
+    - Amplification controls and a history slider for scrolling through past data.
+- **Waveform & zoom**:
+  - Uses a `Figure` + `FigureCanvas` with:
+    - Fixed Y‑axis in mV, X‑axis in seconds.
+    - `amplification` factor controlled by +/− buttons and mouse wheel.
+    - Title text includes the zoom factor (e.g., `Lead II – Live PQRST Analysis (Zoom: 0.10x)`).
+- **PQRST detection** (`PQRSTAnalyzer` class):
+  - Filters the signal with a 0.5–40 Hz band‑pass filter.
+  - Detects R peaks using a Pan‑Tompkins‑style pipeline:
+    - Differentiate → square → moving window integration → `find_peaks`.
+  - Around each R:
+    - **P**: positive peak ~120–200 ms before R.
+    - **Q**: local minimum up to 80 ms before R.
+    - **S**: local minimum up to 80 ms after R.
+    - **T**: positive peak 100–400 ms after S.
+  - Returns peak index arrays: `r_peaks`, `p_peaks`, `q_peaks`, `s_peaks`, `t_peaks`.
+- **Arrhythmia detection** (`ArrhythmiaDetector` + `detect_arrhythmia` helper):
+  - Uses heart rate, QRS duration, RR variability, P‑presence, and overall amplitude to classify:
+    - Asystole, Ventricular Tachycardia, Sinus Bradycardia/Tachycardia,
+    - Atrial Fibrillation / Flutter, PVCs, PACs, SVT, VT/VF, heart block patterns, etc.
+  - Core checks (examples):
+    - **Bradycardia**: HR < 60 bpm with regular RR.
+    - **Tachycardia**: HR > 100 bpm with narrow QRS.
+    - **VT**: HR > 100 bpm, QRS > 120 ms, regular RR.
+    - **AFib**: Irregular RR + missing/irregular P waves.
+- **Metrics in the expanded view**:
+  - Re‑uses the same formulas as the 12‑lead page but focused on a single lead for:
+    - Heart Rate (from local R‑R),
+    - PR, QRS, QT, QTc,
+    - ST‑segment amplitude/label,
+    - QRS axis (via Leads I and aVF from parent),
+    - Rhythm interpretation string.
+
+This overview should give you a single reference for how the signup, dashboard, 12‑lead engine, and expanded‑lead analysis all work together, including the key formulas and methods involved.
+
 ### Generating Reports
 - Click "Generate Report" on the dashboard
 - Choose a filename and location (e.g., Downloads)
