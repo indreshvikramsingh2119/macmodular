@@ -1100,7 +1100,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                         if len(raw_data) > 0 and np.std(raw_data) > 0.01:
                             real_ecg_data = np.array(raw_data)
                             real_data_available = True
-if is_demo_mode and time_window_seconds is not None:
+                            if is_demo_mode and time_window_seconds is not None:
                                 print(f"✅ Using DEMO {lead} data: {len(real_ecg_data)} points ({time_window_seconds}s window, std: {np.std(real_ecg_data):.2f})")
                             else:
                                 print(f"✅ Using ALL available {lead} data: {len(real_ecg_data)} points (std: {np.std(real_ecg_data):.2f})")
