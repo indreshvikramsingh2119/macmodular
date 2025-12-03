@@ -1079,7 +1079,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 }
                 
                 if lead == "-aVR" and len(ecg_test_page.data) > 3:
-# For -aVR, use filtered inverted aVR data
+                    # For -aVR, use filtered inverted aVR data
                     raw_data = ecg_test_page.data[3][-num_samples_to_capture:]
                     # Check if data is not all zeros or flat
                     if len(raw_data) > 0 and np.std(raw_data) > 0.01:
@@ -1142,7 +1142,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 # Add path to master drawing
                 master_drawing.add(ecg_path)
                 
-if is_demo_mode and time_window_seconds is not None:
+                if is_demo_mode and time_window_seconds is not None:
                     print(f"✅ Added DEMO ECG data for Lead {lead}: {len(real_ecg_data)} points ({time_window_seconds}s window - visible peaks only)")
                 else:
                     print(f"✅ Added ALL REAL ECG data for Lead {lead}: {len(real_ecg_data)} points (MAXIMUM heartbeats)")
@@ -1318,7 +1318,7 @@ if is_demo_mode and time_window_seconds is not None:
                     r_peaks, _ = find_peaks(integrated, height=threshold, distance=int(0.6*fs))
                     
                     if len(r_peaks) >= 2:
-lead_I_arr = np.asarray(lead_I)
+                        lead_I_arr = np.asarray(lead_I)
                         lead_aVF_arr = np.asarray(lead_aVF)
                         filtered_i = filtfilt(b, a, lead_I_arr)
                         filtered_avf = filtfilt(b, a, lead_aVF_arr)
