@@ -958,14 +958,13 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     QRS = data.get('QRS', 93)
     QT = data.get('QT', 354)
     QTc = data.get('QTc', 260)
-ST = data.get('ST', 114)
+    ST = data.get('ST', 114)
     # DYNAMIC RR interval calculation from heart rate (instead of hard-coded 857)
     RR = int(60000 / HR) if HR and HR > 0 else 0  # RR interval in ms from heart rate
-   
 
     # Create table data: 2 rows × 2 columns (as per your changes)
     vital_table_data = [
-[f"HR : {HR} bpm", f"QT: {QT} ms"],
+        [f"HR : {HR} bpm", f"QT: {QT} ms"],
         [f"PR : {PR} ms", f"QTc: {QTc} ms"],
         [f"QRS: {QRS} ms", f"ST: {ST} mV"],  # Changed from ms to mV (voltage)
         [f"RR : {RR} ms", ""]
