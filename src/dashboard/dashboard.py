@@ -1507,7 +1507,7 @@ class Dashboard(QWidget):
             if len(peaks) >= 2:
                 # Calculate R-R intervals in milliseconds
                 rr_intervals_ms = np.diff(peaks) * (1000 / fs)
-            
+                
             metrics = {}
             
             # Calculate Heart Rate with anti-flickering
@@ -1974,6 +1974,13 @@ class Dashboard(QWidget):
         # Also update the ECG test page theme if it exists
         if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'update_metrics_frame_theme'):
             self.ecg_test_page.update_metrics_frame_theme(self.dark_mode, self.medical_mode)
+        
+        # Update recommendations based on new metrics (works in demo mode too!)
+        try:
+            if hasattr(self, 'update_live_conclusion'):
+                self.update_live_conclusion()
+        except Exception:
+            pass
     
     def sync_dashboard_metrics_to_ecg_page(self):
         """Sync dashboard's current metric values to ECG test page for consistency"""
