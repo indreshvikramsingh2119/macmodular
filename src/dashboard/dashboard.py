@@ -1677,12 +1677,13 @@ class Dashboard(QWidget):
                     heart_rate = max(10, min(300, heart_rate))
                     hr_int = int(round(heart_rate))
                     
-                    # ANTI-FLICKERING: Smooth over last 5 readings
+                    # ANTI-FLICKERING: Smooth over last 3 readings for faster response in EXE
+                    # Reduced from 5 to 3 for quicker BPM control (5-7 sec target)
                     if not hasattr(self, '_dashboard_bpm_buffer'):
                         self._dashboard_bpm_buffer = []
                     
                     self._dashboard_bpm_buffer.append(hr_int)
-                    if len(self._dashboard_bpm_buffer) > 5:
+                    if len(self._dashboard_bpm_buffer) > 3:
                         self._dashboard_bpm_buffer.pop(0)
                     
                     # Use median for stability

@@ -4621,8 +4621,12 @@ class ECGTestPage(QWidget):
                 else:
                     raise e
             
-            print(f"[DEBUG] ECGTestPage - Starting timer with 50ms interval")
-            self.timer.start(50)
+            # Use more aggressive timer for EXE builds to prevent gaps
+            # PyInstaller bundles may have slower timer resolution
+            timer_interval = 33  # ~30 FPS for smoother plotting in EXE
+            print(f"[DEBUG] ECGTestPage - Starting timer with {timer_interval}ms interval")
+            self.timer.setTimerType(Qt.PreciseTimer)  # Use precise timer for EXE
+            self.timer.start(timer_interval)
             if hasattr(self, '_12to1_timer'):
                 self._12to1_timer.start(100)
             print(f"[DEBUG] ECGTestPage - Timer started, serial reader created")
@@ -6779,8 +6783,9 @@ class ECGTestPage(QWidget):
                     except Exception as e:
                         print(f"❌ Error updating plot {i}: {e}")
                         continue
-                # Calculate ECG metrics every 5 updates for good responsiveness
-                if self.update_count % 5 == 0:
+                # Calculate ECG metrics more frequently for faster BPM updates in EXE
+                # Reduced from every 5 updates to every 3 updates for better responsiveness
+                if self.update_count % 3 == 0:
                     try:
                         self.calculate_ecg_metrics()
                     except Exception as e:

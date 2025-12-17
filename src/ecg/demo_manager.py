@@ -4,7 +4,7 @@ import time
 import threading
 import numpy as np
 import pandas as pd
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QMessageBox, QLabel
 from scipy.signal import find_peaks
 import matplotlib.pyplot as plt
@@ -553,10 +553,12 @@ class DemoManager:
             self.demo_timer.timeout.connect(self.update_demo_plots)
             
             # Adjust timer interval based on wave speed
-            # Target 30-40 FPS on Windows for stability
-            base_interval = 40  # base interval milliseconds
+            # Use faster timer for EXE builds to prevent gaps
+            # PyInstaller bundles may have slower timer resolution
+            base_interval = 33  # ~30 FPS for smoother plotting in EXE
             speed_factor = max(0.5, getattr(self, 'time_window', 10.0) / 10.0)
-            timer_interval = max(25, int(base_interval * speed_factor))
+            timer_interval = max(20, int(base_interval * speed_factor))
+            self.demo_timer.setTimerType(Qt.PreciseTimer)  # Use precise timer for EXE
             self.demo_timer.start(timer_interval)
             
             print(f"🚀 Demo mode started with wave speed: {self.current_wave_speed}mm/s")
