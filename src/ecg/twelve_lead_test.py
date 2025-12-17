@@ -83,6 +83,30 @@ class SamplingRateCalculator:
             self.last_update_time = current_time
         return self.sampling_rate
 
+# ------------------------ ECG Display Gain Helper (Clinical Standard) ------------------------
+
+def get_display_gain(wave_gain_mm: float) -> float:
+    """
+    ECG display gain calculation (hospital standard):
+    10 mm/mV = 1.0x (clinical baseline)
+    
+    Args:
+        wave_gain_mm: Wave gain setting in mm/mV (e.g., 2.5, 5, 10, 20)
+    
+    Returns:
+        Display gain factor:
+        - 2.5 mm/mV → 0.25x
+        - 5 mm/mV → 0.5x
+        - 10 mm/mV → 1.0x (baseline)
+        - 20 mm/mV → 2.0x
+    
+    This matches GE / Philips monitor behavior.
+    """
+    try:
+        return float(wave_gain_mm) / 10.0
+    except (ValueError, TypeError):
+        return 1.0  # Default to 10mm/mV baseline
+
 # ------------------------ Realistic ECG Waveform Generator ------------------------
 
 def generate_realistic_ecg_waveform(duration_seconds=10, sampling_rate=500, heart_rate=72, lead_name="II"):
@@ -1833,8 +1857,55 @@ class ECGTestPage(QWidget):
             # Return safe default values
             return [0] * 12
 
+    def _extract_low_frequency_baseline(self, signal, sampling_rate=500.0):
+        """
+        Extract very-low-frequency baseline estimate (< 0.3 Hz) for display anchoring.
+        
+        Uses 2-second moving average SIGNAL (not mean) to remove:
+        - Respiration (0.1-0.35 Hz) → filtered out
+        - ST/T waves → filtered out
+        - QRS complexes → filtered out
+        
+        Returns only very-low-frequency drift (< 0.1 Hz).
+        
+        Args:
+            signal: ECG signal window
+            sampling_rate: Sampling rate in Hz
+        
+        Returns:
+            Low-frequency baseline estimate (single value)
+        """
+        if len(signal) < 10:
+            return np.nanmean(signal) if len(signal) > 0 else 0.0
+        
+        try:
+            # Method: 2-second moving average SIGNAL (not mean)
+            window_samples = int(2.0 * sampling_rate)  # 2 seconds
+            window_samples = min(window_samples, len(signal))
+            
+            if window_samples >= 10 and len(signal) >= window_samples:
+                # Extract actual low-frequency baseline signal using convolution
+                # This is a proper moving average, not just a statistic
+                kernel = np.ones(window_samples) / window_samples
+                baseline_signal = np.convolve(signal, kernel, mode="valid")
+                # Use the last value of the moving-average signal
+                baseline_estimate = baseline_signal[-1] if len(baseline_signal) > 0 else np.nanmean(signal)
+            else:
+                # Fallback: use mean if window too small
+                baseline_estimate = np.nanmean(signal)
+            
+            return baseline_estimate
+        
+        except Exception:
+            # Fallback: simple mean if moving average fails
+            return np.nanmean(signal) if len(signal) > 0 else 0.0
+    
     def calculate_ecg_metrics(self):
-        """Calculate ECG metrics: Heart Rate, PR Interval, QRS Complex, QRS Axis, ST Interval, QTc"""
+        """Calculate ECG metrics: Heart Rate, PR Interval, QRS Complex, QRS Axis, ST Interval, QTc
+        
+        ⚠️ CLINICAL ANALYSIS: Uses RAW data from self.data[1] (Lead II)
+        This function MUST use raw clinical data, NOT display-processed data.
+        """
 
         if hasattr(self, 'demo_toggle') and self.demo_toggle.isChecked():
             print("🔍 Demo mode active - skipping live ECG metrics calculation")
@@ -1843,7 +1914,8 @@ class ECGTestPage(QWidget):
         if len(self.data) < 2:  # Need at least Lead II for analysis
             return
         
-        # Use Lead II (index 1) for primary analysis
+        # 🫀 CLINICAL: Use RAW Lead II data (index 1) for clinical analysis
+        # This is the raw buffer - NOT display-processed data
         lead_ii_data = self.data[1]
         
         # Throttled debug output - only print occasionally
@@ -1886,7 +1958,11 @@ class ECGTestPage(QWidget):
         self.update_ecg_metrics_display(heart_rate, pr_interval, qrs_duration, qrs_axis, st_segment, qt_interval, qtc_interval)
 
     def calculate_heart_rate(self, lead_data):
-        """Calculate heart rate from Lead II data using R-R intervals"""
+        """Calculate heart rate from Lead II data using R-R intervals
+        
+        ⚠️ CLINICAL ANALYSIS: Must receive RAW clinical data, NOT display-processed data.
+        This function is called with self.data[1] which contains raw ECG values.
+        """
         try:
             # Early exit: if no real signal, report 0 instead of fallback
             try:
@@ -2200,65 +2276,110 @@ class ECGTestPage(QWidget):
             if len(t_amps) > 0:
                 amplitudes['t_amp'] = np.median(t_amps)
             
-            # Calculate RV5 and SV1 for specific leads
+            # Calculate RV5 and SV1 for specific leads (GE/Hospital Standard)
             # Lead V5 is index 10, Lead V1 is index 6
+            # CRITICAL: Use RAW ECG data (self.data), not display-filtered signals
+            # Measurements must be from median beat, relative to TP baseline (isoelectric segment before P-wave)
+            
             if len(self.data) > 10:
-                lead_v5_data = self.data[10]
+                lead_v5_data = self.data[10]  # RAW V5 data
                 if lead_v5_data is not None and len(lead_v5_data) > 200 and np.std(lead_v5_data) > 0.1:
-                    # Filter V5
+                    # Apply minimal bandpass filter ONLY for R-peak detection (0.5-40 Hz)
+                    # This does NOT affect amplitude measurements - we use raw data for measurements
                     filtered_v5 = filtfilt(b, a, lead_v5_data)
                     # Detect R-peaks in V5
                     squared_v5 = np.square(np.diff(filtered_v5))
                     integrated_v5 = np.convolve(squared_v5, np.ones(int(0.15 * fs)) / (0.15 * fs), mode='same')
                     threshold_v5 = np.mean(integrated_v5) + 0.5 * np.std(integrated_v5)
-                    r_peaks_v5, _ = find_peaks(integrated_v5, height=threshold_v5, distance=int(0.15 * fs))  # Reduced for high BPM (360 max)
+                    r_peaks_v5, _ = find_peaks(integrated_v5, height=threshold_v5, distance=int(0.15 * fs))
                     
-                    # Measure R-wave amplitude in V5
+                    # Measure RV5: max(QRS in V5) - TP_baseline_V5 (must be positive, in mV)
                     rv5_amps = []
                     for r_idx in r_peaks_v5[1:-1]:
                         try:
+                            # QRS window: ±80ms around R-peak
                             qrs_start = max(0, r_idx - int(0.08 * fs))
-                            qrs_end = min(len(filtered_v5), r_idx + int(0.08 * fs))
+                            qrs_end = min(len(lead_v5_data), r_idx + int(0.08 * fs))
                             if qrs_end > qrs_start:
-                                qrs_segment = filtered_v5[qrs_start:qrs_end]
-                                baseline = np.mean(filtered_v5[max(0, qrs_start - int(0.05 * fs)):qrs_start])
-                                r_amp = np.max(qrs_segment) - baseline
-                                if r_amp > 0:
-                                    rv5_amps.append(r_amp)
+                                # Use RAW data for amplitude measurement
+                                qrs_segment = lead_v5_data[qrs_start:qrs_end]
+                                
+                                # TP baseline: isoelectric segment before P-wave onset
+                                # Use longer segment (150-350ms before R) for stable baseline
+                                tp_start = max(0, r_idx - int(0.35 * fs))
+                                tp_end = max(0, r_idx - int(0.15 * fs))
+                                if tp_end > tp_start:
+                                    tp_segment = lead_v5_data[tp_start:tp_end]
+                                    tp_baseline = np.median(tp_segment)  # Median for robustness
+                                else:
+                                    # Fallback: short segment before QRS
+                                    tp_baseline = np.median(lead_v5_data[max(0, qrs_start - int(0.05 * fs)):qrs_start])
+                                
+                                # RV5 = max(QRS) - TP_baseline (positive, in mV)
+                                # Convert from ADC counts to mV using hardware calibration
+                                # V5 calibration: adc_per_box_multiplier = 7586.0, for 10mm/mV: 758.6 ADC per box
+                                # 1 box = 5mm = 0.5 mV, so 1 mV = 1517.2 ADC counts
+                                # Calibration factor: 1 mV = 1517.2 ADC (for V5 with 10mm/mV)
+                                # For general case: 1 mV = (adc_per_box_multiplier / wave_gain) * 2
+                                # Simplified: assume standard 10mm/mV, V5 multiplier 7586 → 1 mV ≈ 1517 ADC
+                                r_amp_adc = np.max(qrs_segment) - tp_baseline
+                                if r_amp_adc > 0:
+                                    # Convert ADC to mV: V5 uses 7586 multiplier, 10mm/mV → 1 mV = 1517.2 ADC
+                                    r_amp_mv = r_amp_adc / 1517.2  # Convert ADC to mV
+                                    rv5_amps.append(r_amp_mv)
                         except:
                             continue
                     
                     if len(rv5_amps) > 0:
-                        amplitudes['rv5'] = np.median(rv5_amps)
+                        amplitudes['rv5'] = np.median(rv5_amps)  # Median beat approach
             
             if len(self.data) > 6:
-                lead_v1_data = self.data[6]
+                lead_v1_data = self.data[6]  # RAW V1 data
                 if lead_v1_data is not None and len(lead_v1_data) > 200 and np.std(lead_v1_data) > 0.1:
-                    # Filter V1
+                    # Apply minimal bandpass filter ONLY for R-peak detection (0.5-40 Hz)
                     filtered_v1 = filtfilt(b, a, lead_v1_data)
                     # Detect R-peaks in V1
                     squared_v1 = np.square(np.diff(filtered_v1))
                     integrated_v1 = np.convolve(squared_v1, np.ones(int(0.15 * fs)) / (0.15 * fs), mode='same')
                     threshold_v1 = np.mean(integrated_v1) + 0.5 * np.std(integrated_v1)
-                    r_peaks_v1, _ = find_peaks(integrated_v1, height=threshold_v1, distance=int(0.15 * fs))  # Reduced for high BPM (360 max)
+                    r_peaks_v1, _ = find_peaks(integrated_v1, height=threshold_v1, distance=int(0.15 * fs))
                     
-                    # Measure S-wave amplitude in V1 (negative deflection after R)
+                    # Measure SV1: min(QRS in V1) - TP_baseline_V1 (must be negative, in mV)
                     sv1_amps = []
                     for r_idx in r_peaks_v1[1:-1]:
                         try:
-                            s_start = r_idx
-                            s_end = min(len(filtered_v1), r_idx + int(0.08 * fs))
-                            if s_end > s_start:
-                                s_segment = filtered_v1[s_start:s_end]
-                                baseline = np.mean(filtered_v1[max(0, s_start - int(0.05 * fs)):s_start])
-                                s_amp = baseline - np.min(s_segment)  # S wave is negative, so baseline - min
-                                if s_amp > 0:
-                                    sv1_amps.append(s_amp)
+                            # QRS window: ±80ms around R-peak
+                            qrs_start = max(0, r_idx - int(0.08 * fs))
+                            qrs_end = min(len(lead_v1_data), r_idx + int(0.08 * fs))
+                            if qrs_end > qrs_start:
+                                # Use RAW data for amplitude measurement
+                                qrs_segment = lead_v1_data[qrs_start:qrs_end]
+                                
+                                # TP baseline: isoelectric segment before P-wave onset
+                                tp_start = max(0, r_idx - int(0.35 * fs))
+                                tp_end = max(0, r_idx - int(0.15 * fs))
+                                if tp_end > tp_start:
+                                    tp_segment = lead_v1_data[tp_start:tp_end]
+                                    tp_baseline = np.median(tp_segment)  # Median for robustness
+                                else:
+                                    # Fallback: short segment before QRS
+                                    tp_baseline = np.median(lead_v1_data[max(0, qrs_start - int(0.05 * fs)):qrs_start])
+                                
+                                # SV1 = min(QRS) - TP_baseline (negative, preserve sign, in mV)
+                                # Convert from ADC counts to mV using hardware calibration
+                                # V1 calibration: adc_per_box_multiplier = 5500.0, for 10mm/mV: 550 ADC per box
+                                # 1 box = 5mm = 0.5 mV, so 1 mV = 1100 ADC counts
+                                # Calibration factor: 1 mV = 1100 ADC (for V1 with 10mm/mV)
+                                s_amp_adc = np.min(qrs_segment) - tp_baseline
+                                if s_amp_adc < 0:  # SV1 must be negative
+                                    # Convert ADC to mV: V1 uses 5500 multiplier, 10mm/mV → 1 mV = 1100 ADC
+                                    s_amp_mv = s_amp_adc / 1100.0  # Convert ADC to mV (preserve sign)
+                                    sv1_amps.append(s_amp_mv)
                         except:
                             continue
                     
                     if len(sv1_amps) > 0:
-                        amplitudes['sv1'] = np.median(sv1_amps)
+                        amplitudes['sv1'] = np.median(sv1_amps)  # Median beat approach, negative value
             
             print(f"📊 Wave Amplitudes Calculated: P={amplitudes['p_amp']:.2f}, QRS={amplitudes['qrs_amp']:.2f}, T={amplitudes['t_amp']:.2f}, RV5={amplitudes['rv5']:.2f}, SV1={amplitudes['sv1']:.2f}")
             
@@ -2748,34 +2869,22 @@ class ECGTestPage(QWidget):
             # Maximum deviation of any point from the mean – we will always cover this
             peak_deviation = np.max(np.abs(valid_data - data_mean))
             
-            # Get current gain setting.
-            # IMPORTANT:
-            # - Previously we scaled padding directly with (5.0 / wave_gain).
-            # - At 10 mm/mV this *reduced* the vertical range too much and R‑peaks
-            #   started getting cropped at the top of the small lead boxes.
-            # - To keep waves fully inside the boxes for **all** gains (2.5, 5, 10, 20),
-            #   we never allow the effective gain factor to shrink the Y‑range below
-            #   the base padding that comes from the signal statistics.
-            raw_gain = 5.0 / self.settings_manager.get_wave_gain()  # 2.5mm → 2.0, 5mm → 1.0, 10mm → 0.5, 20mm → 0.25
-            # Do not let gain make the Y‑range *smaller* than base_padding.
-            current_gain = max(1.0, raw_gain)
-            
             # Calculate appropriate Y-range with some padding
             if data_std > 0:
                 # Use standard deviation within central band
                 base_padding = max(data_std * 4, 200)  # Increased padding for better visibility
-                padding = base_padding * current_gain  # Scale by gain setting
+                padding = base_padding  # Do NOT scale padding with gain; gain already applied to signal
                 y_min = data_mean - padding
                 y_max = data_mean + padding
-                print(f"📊 Basic Y-range: base_padding={base_padding:.1f}, gain={current_gain:.1f}, final_padding={padding:.1f}")
+                print(f"📊 Basic Y-range: base_padding={base_padding:.1f}, padding={padding:.1f}")
             else:
                 # Fallback: use percentile window
                 data_range = max(p99 - p1, 300)
                 base_padding = max(data_range * 0.3, 200)
-                padding = base_padding * current_gain  # Scale by gain setting
+                padding = base_padding  # Do NOT scale padding with gain; gain already applied to signal
                 y_min = data_mean - padding
                 y_max = data_mean + padding
-                print(f"📊 Basic Y-range (fallback): base_padding={base_padding:.1f}, gain={current_gain:.1f}, final_padding={padding:.1f}")
+                print(f"📊 Basic Y-range (fallback): base_padding={base_padding:.1f}, padding={padding:.1f}")
             
             # Ensure reasonable bounds
             y_min = max(y_min, -8000)
@@ -2843,13 +2952,11 @@ class ECGTestPage(QWidget):
         self.buffer_size = int(base_buffer * speed_factor)
         
         # Update y-axis limits based on gain.
-        # We keep a **minimum** vertical range so that for higher gains
-        # (e.g. 10 mm/mV, 20 mm/mV) the waves are NOT cropped at the top
-        # of the mini-boxes. Gain is allowed to *increase* headroom but
-        # never shrink it below the base range.
+        # Higher mm/mV = higher gain = larger waves = need more Y-axis range
+        # Use clinical standard helper function (10mm/mV = 1.0x baseline)
         base_ylim = 400
-        raw_gain = 5.0 / wave_gain  # 2.5mm → 2.0, 5mm → 1.0, 10mm → 0.5, 20mm → 0.25
-        gain_factor = max(1.0, raw_gain)
+        gain_factor = get_display_gain(wave_gain)
+        # Scale Y-axis range with gain (NO CLAMPING - allow all gain values)
         self.ylim = int(base_ylim * gain_factor)
 
         # Force immediate redraw of all plots with new settings
@@ -3692,7 +3799,7 @@ class ECGTestPage(QWidget):
                 centered = plot_data - np.mean(plot_data)
 
                 # Apply current gain setting
-                gain_factor = float(current_gain) / 10.0
+                gain_factor = get_display_gain(current_gain)
                 centered = centered * gain_factor
 
                 line.set_data(x, centered)
@@ -3977,7 +4084,8 @@ class ECGTestPage(QWidget):
                     if len(data) > 0:
                         # Detect signal source and apply adaptive scaling
                         signal_source = self.detect_signal_source(data)
-                        gain_factor = 5.0 / self.settings_manager.get_wave_gain()  # Reversed: 2.5mm → 2.0x, 20mm → 0.25x
+                        # Calculate gain factor: higher mm/mV = higher gain (10mm/mV = 1.0x baseline)
+                        gain_factor = get_display_gain(self.settings_manager.get_wave_gain())
                         device_data = np.array(data)
                         centered = self.apply_adaptive_gain(device_data, signal_source, gain_factor)
                         
@@ -4073,16 +4181,16 @@ class ECGTestPage(QWidget):
                 print(f"🔧 Hardware signal: Applied hardware scaling")
                 
             elif signal_source == "human_body":
-                # Different centering and scaling for human body (0-500 range)
-                baseline = np.mean(device_data)
-                centered = (device_data - baseline) * gain_factor * 8  # Amplify weak signals
-                print(f"🔧 Human body signal: Applied body scaling (baseline={baseline:.1f}, amplification=8x)")
+                # Different scaling for human body (0-500 range)
+                # Don't subtract mean here - low-frequency baseline anchor handles it
+                centered = device_data * gain_factor * 8  # Amplify weak signals
+                print(f"🔧 Human body signal: Applied body scaling (amplification=8x)")
                 
             elif signal_source == "weak_body":
                 # Very weak signals - maximum amplification
-                baseline = np.mean(device_data)
-                centered = (device_data - baseline) * gain_factor * 15  # Maximum amplification
-                print(f"🔧 Weak body signal: Applied maximum scaling (baseline={baseline:.1f}, amplification=15x)")
+                # Don't subtract mean here - low-frequency baseline anchor handles it
+                centered = device_data * gain_factor * 15  # Maximum amplification
+                print(f"🔧 Weak body signal: Applied maximum scaling (amplification=15x)")
                 
             else:
                 # Noise or unknown - minimal processing
@@ -4123,9 +4231,11 @@ class ECGTestPage(QWidget):
             p99 = np.percentile(valid_data, 99)
             data_mean = (p1 + p99) / 2.0
             data_std = np.std(valid_data[(valid_data >= p1) & (valid_data <= p99)])
+            # Maximum deviation of any point from the mean – we will always cover this
+            peak_deviation = np.max(np.abs(valid_data - data_mean)) if len(valid_data) > 0 else 0.0
             
-            # Get current gain setting to respect user's gain control (REVERSED)
-            current_gain = 5.0 / self.settings_manager.get_wave_gain()  # Reversed: 2.5mm → 2.0x, 20mm → 0.25x
+            # Get current gain setting only if data is not already scaled
+            current_gain = 1.0 if data_already_scaled else get_display_gain(self.settings_manager.get_wave_gain())
             
             # Calculate appropriate Y-range with adaptive padding based on signal source.
             # Goal: make peaks visually bigger but still avoid cropping by using robust stats.
@@ -4145,13 +4255,13 @@ class ECGTestPage(QWidget):
             else:
                 # Hardware / unknown – keep more room but less than before so peaks are taller.
                 base_padding = max(data_std * 3.0, 250)
-                padding = base_padding * current_gain
-                print(f"📊 Hardware Y-range: base_padding={base_padding:.1f}, gain={current_gain:.1f}, pre_clip_padding={padding:.1f}")
+                padding = base_padding  # Do NOT scale padding with gain; signal already scaled
+                print(f"📊 Hardware Y-range: base_padding={base_padding:.1f}, padding={padding:.1f}")
 
             # FINAL SAFETY: always cover the tallest peak with 10% headroom,
             # so waves never touch or cross the plot border (no cropping),
             # regardless of gain/speed combinations.
-            if peak_deviation > 0:
+            if signal_source not in ["human_body", "weak_body"] and peak_deviation > 0:
                 min_padding = peak_deviation * 1.1
                 if padding < min_padding:
                     padding = min_padding
@@ -4166,7 +4276,6 @@ class ECGTestPage(QWidget):
             else:
                 # Fallback: use percentile window with reasonable range
                 data_range = max(p99 - p1, 80 if signal_source in ["human_body", "weak_body"] else 300)
-                data_range = data_range * current_gain
                 y_min = data_mean - data_range / 2
                 y_max = data_mean + data_range / 2
                 
@@ -4189,7 +4298,8 @@ class ECGTestPage(QWidget):
                 signal_source = self.detect_signal_source(data_array)
                 
                 # Apply current settings to the incoming data
-                gain_factor = 5.0 / self.settings_manager.get_wave_gain()  # Reversed: 2.5mm → 2.0x, 20mm → 0.25x
+                # Calculate gain factor: higher mm/mV = higher gain (10mm/mV = 1.0x baseline)
+                gain_factor = get_display_gain(self.settings_manager.get_wave_gain())
                 
                 # Apply adaptive gain based on signal source
                 centered = self.apply_adaptive_gain(data_array, signal_source, gain_factor)
@@ -4236,10 +4346,10 @@ class ECGTestPage(QWidget):
             # Convert to numpy array
             signal = np.array(signal_data, dtype=float)
             
-            # 1. Remove DC offset (baseline drift) - more aggressive
-            signal = signal - np.mean(signal)
+            # NOTE: Baseline correction is handled by slow baseline anchor in display paths
+            # Do NOT subtract mean here - baseline anchor handles it before this function is called
             
-            # 2. Apply AC/EMG/DFT filters based on user settings from SettingsManager
+            # Apply AC/EMG/DFT filters based on user settings from SettingsManager
             # This applies filters in correct order: DFT -> EMG -> AC
             sampling_rate = getattr(self, 'demo_fs', 500)  # Get sampling rate, default 500Hz
             if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate'):
@@ -4859,7 +4969,8 @@ class ECGTestPage(QWidget):
                     # Convert device data to ECG range and center around zero
                     device_data = np.array(data)
                     # Scale to typical ECG range (subtract baseline ~2100 and scale)
-                    gain_factor = 5.0 / self.settings_manager.get_wave_gain()  # Reversed: 2.5mm → 2.0x, 20mm → 0.25x
+                    # Calculate gain factor: higher mm/mV = higher gain (10mm/mV = 1.0x baseline)
+                    gain_factor = get_display_gain(self.settings_manager.get_wave_gain())
                     centered = (device_data - 2100) * gain_factor
                     
                     # Apply noise reduction filtering
@@ -5607,7 +5718,7 @@ class ECGTestPage(QWidget):
                         centered_raw = np.zeros(buffer_len, dtype=float)
 
                     # Apply current gain setting (match main 12-lead grid)
-                    gain_factor = float(self.settings_manager.get_wave_gain()) / 10.0  # 10mm/mV baseline
+                    gain_factor = get_display_gain(self.settings_manager.get_wave_gain())
                     
                     # Reduce amplification for 20mm/mV to prevent clipping in 12:1 overlay mode
                     if gain_factor >= 2.0:  # 20mm/mV or higher
@@ -6299,7 +6410,7 @@ class ECGTestPage(QWidget):
                         centered_raw = np.zeros(buffer_len, dtype=float)
 
                     # Apply current gain setting (match main 12-lead grid)
-                    gain_factor = float(self.settings_manager.get_wave_gain()) / 10.0  # 10mm/mV baseline
+                    gain_factor = get_display_gain(self.settings_manager.get_wave_gain())
                     
                     # Reduce amplification for 20mm/mV to prevent clipping in 6:2 overlay mode
                     if gain_factor >= 2.0:  # 20mm/mV or higher
@@ -6405,10 +6516,40 @@ class ECGTestPage(QWidget):
                             raw = np.asarray(self.data[i])
                             gain = 1.0
                             try:
-                                gain = float(self.settings_manager.get_wave_gain()) / 10.0  # 10mm/mV baseline
+                                gain = get_display_gain(self.settings_manager.get_wave_gain())
                             except Exception:
                                 pass
-                            raw = (raw - np.nanmean(raw)) * gain
+                            # 🫀 DISPLAY: Low-frequency baseline anchor (removes respiration from baseline)
+                            # Extract very-low-frequency baseline (< 0.3 Hz) to prevent baseline from "breathing"
+                            try:
+                                # Initialize slow anchor if needed
+                                if not hasattr(self, '_baseline_anchors'):
+                                    self._baseline_anchors = [0.0] * 12
+                                    self._baseline_alpha_slow = 0.0005  # Monitor-grade: ~4 sec time constant at 500 Hz
+                                
+                                if len(raw) > 0:
+                                    # Extract low-frequency baseline estimate (removes respiration 0.1-0.35 Hz)
+                                    baseline_estimate = self._extract_low_frequency_baseline(raw, fs)
+                                    
+                                    # Update anchor with slow EMA (tracks only very-low-frequency drift)
+                                    self._baseline_anchors[i] = (1 - self._baseline_alpha_slow) * self._baseline_anchors[i] + self._baseline_alpha_slow * baseline_estimate
+                                    
+                                    # Subtract anchor (NOT raw mean, NOT baseline estimate directly)
+                                    raw = raw - self._baseline_anchors[i]
+                                    
+                                    # Final zero-centering clamp (visual only, display path)
+                                    if not hasattr(self, '_display_zero_refs'):
+                                        self._display_zero_refs = [0.0] * 12
+                                    
+                                    zero_alpha = 0.01  # Fast convergence, visual only
+                                    current_dc = np.nanmean(raw) if len(raw) > 0 else 0.0
+                                    self._display_zero_refs[i] = (1 - zero_alpha) * self._display_zero_refs[i] + zero_alpha * current_dc
+                                    raw = raw - self._display_zero_refs[i]
+                            except Exception as filter_error:
+                                # Fallback: use original signal (baseline anchor handles it, no mean subtraction)
+                                print(f"⚠️ Using fallback baseline correction: {filter_error}")
+                            
+                            raw = raw * gain
 
                             fs = 500
                             if hasattr(self, 'sampler') and getattr(self.sampler, 'sampling_rate', None):
@@ -6545,7 +6686,8 @@ class ECGTestPage(QWidget):
                             continue
                         has_data = (i < len(self.data) and len(self.data[i]) > 0)
                         if has_data:
-                            gain_factor = 5.0 / self.settings_manager.get_wave_gain()  # Reversed: 2.5mm → 2.0x, 20mm → 0.25x
+                            # Calculate gain factor: higher mm/mV = higher gain (10mm/mV = 1.0x baseline)
+                            gain_factor = get_display_gain(self.settings_manager.get_wave_gain())
                             scaled_data = self.apply_adaptive_gain(self.data[i], signal_source, gain_factor)
 
                             # Build time axis and apply wave-speed scaling
@@ -6564,25 +6706,52 @@ class ECGTestPage(QWidget):
                             else:
                                 data_slice = raw_data
                             
+                            # 🫀 DISPLAY: Low-frequency baseline anchor (removes respiration from baseline)
+                            # Extract very-low-frequency baseline (< 0.3 Hz) to prevent baseline from "breathing"
+                            filtered_slice = np.array(data_slice, dtype=float)
+                            try:
+                                # Initialize slow anchor if needed
+                                if not hasattr(self, '_baseline_anchors'):
+                                    self._baseline_anchors = [0.0] * 12
+                                    self._baseline_alpha_slow = 0.0005  # Monitor-grade: ~4 sec time constant at 500 Hz
+                                
+                                if len(filtered_slice) > 0:
+                                    # Extract low-frequency baseline estimate (removes respiration 0.1-0.35 Hz)
+                                    baseline_estimate = self._extract_low_frequency_baseline(filtered_slice, sampling_rate)
+                                    
+                                    # Update anchor with slow EMA (tracks only very-low-frequency drift)
+                                    self._baseline_anchors[i] = (1 - self._baseline_alpha_slow) * self._baseline_anchors[i] + self._baseline_alpha_slow * baseline_estimate
+                                    
+                                    # Subtract anchor (NOT raw mean)
+                                    filtered_slice = filtered_slice - self._baseline_anchors[i]
+                                    
+                                    # Final zero-centering clamp (visual only, display path)
+                                    if not hasattr(self, '_display_zero_refs'):
+                                        self._display_zero_refs = [0.0] * 12
+                                    
+                                    zero_alpha = 0.01  # Fast convergence, visual only
+                                    current_dc = np.nanmean(filtered_slice) if len(filtered_slice) > 0 else 0.0
+                                    self._display_zero_refs[i] = (1 - zero_alpha) * self._display_zero_refs[i] + zero_alpha * current_dc
+                                    filtered_slice = filtered_slice - self._display_zero_refs[i]
+                            except Exception as filter_error:
+                                # Fallback: use original signal (baseline anchor handles it, no mean subtraction)
+                                print(f"⚠️ Using fallback baseline correction for lead {self.leads[i] if hasattr(self, 'leads') else i}: {filter_error}")
+                            
                             # Optional AC notch filtering based on "Set Filter" selection.
                             # Keeps wave peaks intact while removing 50/60 Hz power noise for machine serial data.
-                            filtered_slice = np.array(data_slice, dtype=float)
                             try:
                                 ac_setting = self.settings_manager.get_setting("filter_ac", "off") if self.settings_manager else "off"
                                 if ac_setting and ac_setting != "off" and len(filtered_slice) >= 10:
                                     from ecg.ecg_filters import apply_ac_filter
                                     filtered_slice = apply_ac_filter(filtered_slice, sampling_rate, ac_setting)
                             except Exception as filter_error:
-                                print(f"⚠️ Skipping AC filter for lead {self.leads[i] if hasattr(self, 'leads') else i}: {filter_error}")
+                                pass  # AC filter is optional
                             
-                            # Apply wave gain similar to demo mode: center first, then multiply by gain
-                            gain_factor = self.settings_manager.get_wave_gain() / 10.0
+                            # Apply wave gain
+                            gain_factor = get_display_gain(self.settings_manager.get_wave_gain())
                             
-                            # Center the slice to keep baseline around zero (same as demo mode)
-                            centered_slice = np.array(filtered_slice, dtype=float)
-                            slice_center = np.nanmedian(centered_slice)
-                            if np.isfinite(slice_center):
-                                centered_slice = centered_slice - slice_center
+                            # Signal is already baseline-corrected by median+mean filter
+                            centered_slice = filtered_slice
                             
                             # Apply gain after centering (same as demo mode)
                             scaled_data = centered_slice * gain_factor

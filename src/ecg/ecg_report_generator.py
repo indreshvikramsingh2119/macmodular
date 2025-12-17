@@ -13,6 +13,134 @@ import numpy as np
 # Set matplotlib to use non-interactive backend
 matplotlib.use('Agg')
 
+# ------------------------ Conservative interpretation helpers ------------------------
+
+def _safe_float(value, default=None):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _build_conservative_conclusions(metrics, settings_manager=None, sampling_rate=None, recording_duration=None):
+    """
+    Build a conservative, hospital-style conclusions list.
+    Uses only provided metrics (assumed pre-display / raw-based).
+    """
+    conclusions = []
+
+    # Extract measurements
+    hr = _safe_float(metrics.get("HR_bpm") or metrics.get("Heart_Rate") or metrics.get("HR"), None)
+    pr = _safe_float(metrics.get("PR"), None)
+    qrs = _safe_float(metrics.get("QRS"), None)
+    qt = _safe_float(metrics.get("QT"), None)
+    qtc_bazett = _safe_float(metrics.get("QTc_Bazett") or metrics.get("QTc"), None)
+    qtc_frid = _safe_float(metrics.get("QTc_Fridericia"), None)
+    axis_qrs = metrics.get("QRS_axis") or metrics.get("Axis") or "--"
+
+    rv5 = _safe_float(metrics.get("RV5"), None)
+    sv1 = _safe_float(metrics.get("SV1"), None)
+    rv5_sv1 = _safe_float(metrics.get("RV5_SV1"), None)
+    st_dev = _safe_float(metrics.get("ST_deviation") or metrics.get("ST"), None)
+
+    # Acquisition params
+    wave_gain = None
+    wave_speed = None
+    if settings_manager:
+        try:
+            wave_gain = _safe_float(settings_manager.get_wave_gain(), None)
+        except Exception:
+            pass
+        try:
+            wave_speed = _safe_float(settings_manager.get_wave_speed(), None)
+        except Exception:
+            pass
+
+    # Rhythm classification (conservative)
+    rhythm = "Rhythm: not enough data"
+    if hr is not None:
+        if hr > 100:
+            rhythm = f"Sinus tachycardia (HR ≈ {hr:.0f} bpm)"
+        elif hr < 60:
+            rhythm = f"Sinus bradycardia (HR ≈ {hr:.0f} bpm)"
+        else:
+            rhythm = f"Normal sinus rhythm (HR ≈ {hr:.0f} bpm)"
+
+    # QTc assessment (suppress Bazett when HR > 100)
+    qtc_line = "QTc: not available"
+    if hr is not None and hr > 100:
+        if qtc_frid is not None:
+            qtc_line = f"QTcF (Fridericia): {qtc_frid:.0f} ms"
+    else:
+        if qtc_bazett is not None:
+            if qtc_bazett < 440:
+                band = "Normal"
+            elif qtc_bazett <= 470:
+                band = "Borderline"
+            else:
+                band = "Prolonged"
+            qtc_line = f"QTcB (Bazett): {qtc_bazett:.0f} ms ({band})"
+    if qtc_frid is not None:
+        qtc_sec = qtc_frid / 1000.0
+        if qtc_line == "QTc: not available":
+            qtc_line = f"QTcF (Fridericia): {qtc_frid:.0f} ms ({qtc_sec:.3f} s)"
+        else:
+            qtc_line += f"; QTcF (Fridericia): {qtc_frid:.0f} ms ({qtc_sec:.3f} s)"
+
+    # LVH (Sokolow-Lyon) – use abs(SV1) internally, keep signed SV1 for reporting
+    lvh_line = None
+    if rv5 is not None and sv1 is not None:
+        total = rv5_sv1 if rv5_sv1 is not None else (rv5 + abs(sv1))
+        if total is not None and total >= 35:
+            lvh_line = f"Possible LVH (Sokolow-Lyon RV5+SV1 = {total:.1f} mm)"
+
+    # ST deviation (conservative)
+    st_line = "ST deviation: not assessed"
+    if st_dev is not None:
+        st_line = f"ST deviation: {st_dev:.2f} mV (J+60ms); report only as deviation"
+
+    # Measured values summary
+    measured = "Measured Values: "
+    parts = []
+    if hr is not None:
+        parts.append(f"HR {hr:.0f} bpm")
+    if pr is not None:
+        parts.append(f"PR {pr:.0f} ms")
+    if qrs is not None:
+        parts.append(f"QRS {qrs:.0f} ms")
+    if qt is not None:
+        parts.append(f"QT {qt:.0f} ms")
+    if qtc_bazett is not None:
+        parts.append(f"QTc {qtc_bazett:.0f} ms")
+    if axis_qrs:
+        parts.append(f"Axis {axis_qrs}")
+    measured += "; ".join(parts) if parts else "not available"
+
+    # Acquisition info
+    acq_parts = []
+    if sampling_rate:
+        acq_parts.append(f"Sampling rate {sampling_rate} Hz")
+    if wave_gain:
+        acq_parts.append(f"Gain {wave_gain:.1f} mm/mV")
+    if wave_speed:
+        acq_parts.append(f"Paper speed {wave_speed:.1f} mm/s")
+    if recording_duration:
+        acq_parts.append(f"Duration {recording_duration}")
+    acq_info = "Acquisition: " + "; ".join(acq_parts) if acq_parts else "Acquisition: not available"
+
+    # Build conservative list (max 12 entries downstream)
+    conclusions.append(measured)
+    conclusions.append(rhythm)
+    conclusions.append(qtc_line)
+    if lvh_line:
+        conclusions.append(lvh_line)
+    conclusions.append(st_line)
+    conclusions.append("Automated interpretation (conservative): Normal unless measurements suggest otherwise")
+    conclusions.append(acq_info)
+    conclusions.append("This is an automated ECG analysis and must be reviewed by a qualified physician.")
+
+    return conclusions
+
 # ==================== ECG DATA SAVE/LOAD FUNCTIONS ====================
 
 def save_ecg_data_to_file(ecg_test_page, output_file=None):
@@ -551,75 +679,56 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
         line = Line(0, y_pos, width, y_pos, strokeColor=major_grid_color, strokeWidth=0.8)
         drawing.add(line)
     
-    # STEP 3: Draw ALL AVAILABLE ECG data - NO DOWNSAMPLING, NO LIMITS!
-    if ecg_data is not None and len(ecg_data) > 0:
-        print(f" Drawing ALL AVAILABLE ECG data for {lead_name}: {len(ecg_data)} points (NO LIMITS)")
-        
-        # SIMPLE APPROACH: Use ALL available data points - NO cutting, NO downsampling
-        # This will show as many heartbeats as possible in the available data
-        
-        # Create time array for ALL the data
-        t = np.linspace(0, width, len(ecg_data))
-        
-        # Apply wave_gain from ecg_settings.json (amplitude scaling)
-        # IMPORTANT: Match dashboard behavior - center first, then apply gain
-        
-        # Step 1: Apply baseline 2000 and wave_gain-based ADC per box scaling
-        # LEAD-SPECIFIC ADC PER BOX CONFIGURATION
-        # Each lead can have different ADC per box multiplier (will be divided by wave_gain)
-        adc_per_box_config = {
-            'I': 5500.0,
-            'II': 4955.0,  
-            'III': 5213.0,  
-            'aVR': 5353.0, 
-            'aVL': 5500.0,
-            'aVF': 5353.0, 
-            'V1': 5500.0,
-            'V2': 5500.0,
-            'V3': 5500.0,
-            'V4': 7586.0,  
-            'V5': 7586.0, 
-            'V6': 8209.0, 
-            '-aVR': 5500.0,  # For Cabrera sequence
-        }
-        # Get lead-specific ADC per box multiplier (default: 5500)
-        adc_per_box_multiplier = adc_per_box_config.get(lead_name, 5500.0)
-        
-        # Convert to numpy array
-        adc_data = np.array(ecg_data, dtype=float)
-        
-        # Apply baseline 2000 (subtract baseline from ADC values)
-        baseline_adc = 2000.0
-        centered_adc = adc_data - baseline_adc
-        
-        # Calculate ADC per box based on wave_gain and lead-specific multiplier
-        adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)  # Avoid division by zero
-        
-        # Convert ADC offset to boxes (vertical units)
-        # Direct calculation: boxes_offset = centered_adc / adc_per_box
-        # Example: 2000 ADC offset / 750 ADC per box = 2.6666 boxes
-        boxes_offset = centered_adc / adc_per_box
-        
-        # Convert boxes to Y position
-        center_y = height / 2.0  # Center of the graph in points
-        box_height_points = 5.0  # 1 box = 5mm = 5 points
-        
-        # Convert boxes offset to Y position
-        ecg_normalized = center_y + (boxes_offset * box_height_points)
-        
-        # Draw ALL ECG data points - NO REDUCTION
-        ecg_color = colors.HexColor("#000000")  # Black ECG line
-        
-        # OPTIMIZED: Draw every point for maximum detail
-        for i in range(len(t) - 1):
-            line = Line(t[i], ecg_normalized[i], 
-                       t[i+1], ecg_normalized[i+1], 
-                       strokeColor=ecg_color, strokeWidth=0.5)
-            drawing.add(line)
-        
-        print(f" Drew ALL {len(ecg_data)} ECG data points for {lead_name} - showing MAXIMUM heartbeats!")
-    else:
+    # STEP 3: Plot ECG in fixed diagnostic scale (25 mm/s, 10 mm/mV) with no autoscale
+    if ecg_data is None or len(ecg_data) == 0:
         print(f" No real data available for {lead_name} - showing grid only")
+        return drawing
+
+    speed_mm_s = 25.0
+    width_mm = 150.0  # fits A4 printable width; 6.0 s window at 25 mm/s
+    total_seconds = width_mm / speed_mm_s
+    height_mm_physical = 60.0  # ±3 mV at 10 mm/mV
+
+    ecg_array = np.asarray(ecg_data, dtype=float)
+    med_abs = np.nanmedian(np.abs(ecg_array)) if len(ecg_array) else 0.0
+    ecg_mv = ecg_array / 1000.0 if med_abs > 20.0 else ecg_array
+
+    fs = 500.0
+    try:
+        if 'computed_sampling_rate' in globals():
+            fs = float(globals().get('computed_sampling_rate', fs))
+    except Exception:
+        pass
+    t_sec = np.arange(len(ecg_mv)) / fs
+
+    mask = t_sec <= total_seconds
+    t_sec = t_sec[mask]
+    ecg_mv = ecg_mv[mask]
+    if len(t_sec) == 0:
+        print(f"⚠️ ECG data empty after windowing for {lead_name}")
+        return drawing
+
+    # Gain once: mm per mV
+    y_mm = ecg_mv * wave_gain_mm_mv
+    baseline_mm = height_mm_physical / 2.0
+    y_mm = baseline_mm + y_mm
+    x_mm = t_sec * speed_mm_s
+
+    # Clip to panel
+    y_mm = np.clip(y_mm, 0.0, height_mm_physical)
+    x_mm = np.clip(x_mm, 0.0, width_mm)
+
+    # Convert to points for plotting
+    points = list(zip(x_mm, y_mm))
+
+    # Draw as line segments
+    ecg_color = colors.HexColor("#000000")
+    for i in range(len(points) - 1):
+        x1 = points[i][0] * mm
+        y1 = points[i][1] * mm
+        x2 = points[i+1][0] * mm
+        y2 = points[i+1][1] * mm
+        drawing.add(Line(x1, y1, x2, y2, strokeColor=ecg_color, strokeWidth=0.6))
     
     return drawing
 
@@ -852,12 +961,6 @@ def generate_ecg_report(
     from utils.settings_manager import SettingsManager
     settings_manager = SettingsManager()
 
-    def _safe_float(value, default):
-        try:
-            return float(value)
-        except Exception:
-            return default
-
     def _safe_int(value, default=0):
         try:
             return int(float(value))
@@ -895,6 +998,20 @@ def generate_ecg_report(
         data["RR_ms"] = int(60000 / hr_bpm_value)
     else:
         data["RR_ms"] = data.get("RR_ms", 0)
+
+    # Compute QTc (Fridericia) safely using seconds; store in data for downstream use
+    try:
+        qt_ms = _safe_float(data.get("QT"))
+        rr_ms = _safe_float(data.get("RR_ms"))
+        qtc_frid_ms = None
+        if qt_ms and qt_ms > 0 and rr_ms and rr_ms > 0:
+            qt_sec = qt_ms / 1000.0
+            rr_sec = rr_ms / 1000.0
+            qtc_frid_ms = qt_sec / (rr_sec ** (1.0 / 3.0)) * 1000.0
+        if qtc_frid_ms and qtc_frid_ms > 0:
+            data["QTc_Fridericia"] = qtc_frid_ms
+    except Exception:
+        pass
 
     # ==================== STEP 2: Get wave_speed from ecg_settings.json (PRIORITY) ====================
     # Priority: ecg_settings.json  wave_speed  (calculation-based beats  )
@@ -987,20 +1104,15 @@ def generate_ecg_report(
     except Exception:
         pass
 
-    # FILTER: Remove empty conclusions and "---" placeholders - ONLY SHOW REAL CONCLUSIONS
-    # MAXIMUM 12 CONCLUSIONS (because only 12 boxes available)
-    filtered_conclusions = []
-    for conclusion in dashboard_conclusions:
-        # Keep only non-empty conclusions that are not "---"
-        if conclusion and conclusion.strip() and conclusion.strip() != "---":
-            filtered_conclusions.append(conclusion.strip())
-            # LIMIT: Maximum 12 conclusions (only 12 boxes available)
-            if len(filtered_conclusions) >= 12:
-                break
-    
-    print(f"\n Original conclusions: {len(dashboard_conclusions)}")
-    print(f" Filtered conclusions (removed empty/---): {len(filtered_conclusions)}")
-    print(f" Final conclusions to show (MAX 12): {filtered_conclusions}\n")
+    # Replace conclusions with conservative hospital-style list built from measured metrics
+    filtered_conclusions = _build_conservative_conclusions(
+        data,
+        settings_manager=settings_manager,
+        sampling_rate=computed_sampling_rate,
+        recording_duration=data.get("recording_duration") or data.get("duration")
+    )
+    # Ensure max 12
+    filtered_conclusions = filtered_conclusions[:12]
 
     #  FORCE DELETE ALL OLD WHITE BACKGROUND IMAGES
     if lead_images is None:
@@ -1162,11 +1274,44 @@ def generate_ecg_report(
 
     # Report Overview
     story.append(Paragraph("<b>Report Overview</b>", styles['Heading3']))
+    # Build heart rate statistics over rolling ≥10s RR/HR arrays; fall back to "--"
+    hr_values = []
+    rr_values = []
+    for key in ["hr_values", "hr_list", "hr_buffer", "hr_history", "hr_series", "hr_per_minute_for_report"]:
+        vals = data.get(key)
+        if isinstance(vals, (list, tuple, np.ndarray)):
+            for v in vals:
+                vf = _safe_float(v)
+                if vf and vf > 0:
+                    hr_values.append(vf)
+    for key in ["RR_ms_series", "RR_ms_window"]:
+        vals = data.get(key)
+        if isinstance(vals, (list, tuple, np.ndarray)):
+            for v in vals:
+                vf = _safe_float(v)
+                if vf and vf > 0:
+                    rr_values.append(vf)
+    # Include single RR_ms if present
+    rr_single = _safe_float(data.get("RR_ms"))
+    if rr_single and rr_single > 0:
+        rr_values.append(rr_single)
+    # If only RR available, convert to HR
+    if rr_values and not hr_values:
+        hr_values = [60000.0 / v for v in rr_values if v > 0]
+    # Ensure window length roughly ≥10s (500 Hz → 5000 samples, but use count proxy)
+    if len(hr_values) < 2 and hr_bpm_value and hr_bpm_value > 0:
+        hr_values.append(hr_bpm_value)
+    max_hr = max(hr_values) if hr_values else None
+    min_hr = min(hr_values) if hr_values else None
+    avg_hr = float(np.mean(hr_values)) if hr_values else None
+
+    def _fmt_bpm(value):
+        return f"{value:.0f} bpm" if value and value > 0 else "--"
+
     overview_data = [
-        # ["Total Number of Heartbeats (beats):", data["HR"]],
-        ["Maximum Heart Rate:", f'{data["HR_max"]} bpm'],
-        ["Minimum Heart Rate:", f'{data["HR_min"]} bpm'],
-        ["Average Heart Rate:", f'{data["HR_avg"]} bpm'],
+        ["Maximum Heart Rate:", _fmt_bpm(max_hr)],
+        ["Minimum Heart Rate:", _fmt_bpm(min_hr)],
+        ["Average Heart Rate:", _fmt_bpm(avg_hr)],
     ]
     table = Table(overview_data, colWidths=[300, 200])
     table.setStyle(TableStyle([
@@ -1184,14 +1329,38 @@ def generate_ecg_report(
     
     # Create table with 3 columns: Interval Names, Observed Values, Standard Range
     obs_headers = ["Interval Names", "Observed Values", "Standard Range"]
+    def _fmt_ms(value):
+        return f"{value:.0f} ms" if value and _safe_float(value) and _safe_float(value) > 0 else "--"
+
+    def _fmt_mv(value):
+        try:
+            vf = _safe_float(value)
+            if vf and vf != 0:
+                return f"{vf:.2f} mV"
+        except Exception:
+            pass
+        return "--"
+
+    def _fmt_deg(value):
+        try:
+            vf = _safe_float(value)
+            if vf and vf != 0:
+                return f"{vf:.0f}°"
+        except Exception:
+            pass
+        if value and str(value).strip() not in ["", "0", "0.0"]:
+            return f"{value}°" if not str(value).endswith("°") else str(value)
+        return "--"
+
     obs_data = [
-        ["Heart Rate", f"{data['beat']} bpm", "60-100"],                    
-        ["PR Interval", f"{data['PR']} ms", "120 ms - 200 ms"],            
-        ["QRS Complex", f"{data['QRS']} ms", "70 ms - 120 ms"],            
-        ["QRS Axis", f"{data.get('QRS_axis', '--')}°", "Normal"],         
-        ["QT Interval", f"{data['QT']} ms", "300 ms - 450 ms"],            
-        ["QTC Interval", f"{data['QTc']} ms", "300 ms - 450 ms"],          
-        ["ST Interval", f"{data['ST']} ms", "80 ms - 120 ms"],            
+        ["Heart Rate", _fmt_bpm(data.get('beat')), "60-100"],                    
+        ["PR Interval", _fmt_ms(data.get('PR')), "120 ms - 200 ms"],            
+        ["QRS Complex", _fmt_ms(data.get('QRS')), "70 ms - 120 ms"],            
+        ["QRS Axis", _fmt_deg(data.get('QRS_axis') or data.get('Axis')), "Normal"],         
+        ["QT Interval", _fmt_ms(data.get('QT')), "300 ms - 450 ms"],            
+        ["QTCB (Bazett)", _fmt_ms(data.get('QTc')), "300 ms - 450 ms"],          
+        ["QTCF (Fridericia)", _fmt_ms(data.get('QTc_Fridericia')), "300 ms - 450 ms"],          
+        ["ST Deviation (J+60 ms)", _fmt_mv(data.get('ST')), "Report in mV"],            
     ]
     
     # Add headers to data
@@ -1339,10 +1508,10 @@ def generate_ecg_report(
 
     # Create table data: 2 rows × 2 columns (as per your changes)
     vital_table_data = [
-        [f"HR : {HR} bpm", f"QT: {QT} ms"],
-        [f"PR : {PR} ms", f"QTc: {QTc} ms"],
-        [f"QRS: {QRS} ms", f"ST: {ST} ms"],
-        [f"RR : {RR} ms", ""]  
+        [f"HR : {_fmt_bpm(HR)}", f"QT: {_fmt_ms(QT)}"],
+        [f"PR : {_fmt_ms(PR)}", f"QTc: {_fmt_ms(QTc)}"],
+        [f"QRS: {_fmt_ms(QRS)}", f"ST Deviation (J+60 ms): {_fmt_mv(ST)}"],
+        [f"RR : {_fmt_ms(RR)}", ""]  
     ]
 
     # Create vital parameters table with MORE LEFT and TOP positioning
@@ -1380,7 +1549,6 @@ def generate_ecg_report(
     
     # STEP 2: Define positions for all 12 leads based on selected sequence (SHIFTED UP by 80 points total: 40+25+15)
     y_positions = [580, 530, 480, 430, 380, 330, 280, 230, 180, 130, 80, 30]  
-    6
     lead_positions = []
     
     for i, lead in enumerate(lead_order):
@@ -1455,336 +1623,23 @@ def generate_ecg_report(
             print(f"   Expected beats shown: ~{expected_beats} beats")
     
     for pos_info in lead_positions:
-        lead = pos_info["lead"]
-        x_pos = pos_info["x"]
-        y_pos = pos_info["y"]
-        
+        lead = pos_info['lead']
+        x_pos = pos_info['x']
+        y_pos = pos_info['y']
         try:
-            # STEP 3A: Add lead label directly
-            from reportlab.graphics.shapes import String
-            lead_label = String(10, y_pos + 20, f"{lead}", 
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+            from reportlab.graphics.shapes import String, Group
+            lead_label = String(10, y_pos + 20, f"{lead}", fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
             master_drawing.add(lead_label)
-            
-            # STEP 3B: Get REAL ECG data for this lead (ONLY from saved file - calculation-based)
-            # IMPORTANT:  saved file  data use , live dashboard   (calculation-based beats  )
-            real_data_available = False
-            real_ecg_data = None
-            
-            # Helper function to calculate derived leads from I and II
-            def calculate_derived_lead(lead_name, lead_i_data, lead_ii_data):
-                """Calculate derived leads: III, aVR, aVL, aVF from I and II"""   
-                
-                lead_i = np.array(lead_i_data, dtype=float)
-                lead_ii = np.array(lead_ii_data, dtype=float)
-                
-                if lead_name == "III":
-                    return lead_ii - lead_i  # III = II - I
-                elif lead_name == "aVR":
-                    return -(lead_i + lead_ii) / 2.0  # aVR = -(I + II) / 2
-                elif lead_name == "aVL":
-                    # aVL = (Lead I - Lead III) / 2
-                    lead_iii = lead_ii - lead_i  # Calculate Lead III first
-                    return (lead_i - lead_iii) / 2.0  # aVL = (I - III) / 2
-                elif lead_name == "aVF":
-                    # aVF = (Lead II + Lead III) / 2
-                    lead_iii = lead_ii - lead_i  # Calculate Lead III first
-                    return (lead_ii + lead_iii) / 2.0  # aVF = (II + III) / 2
-                elif lead_name == "-aVR":
-                    return -(-(lead_i + lead_ii) / 2.0)  # -aVR = -aVR = (I + II) / 2
-                else:
-                    return None
-            
-            # Priority 1: Use saved_ecg_data (REQUIRED for calculation-based beats)
-            saved_data_samples = 0  # Initialize for comparison with live data
-            if saved_ecg_data and 'leads' in saved_ecg_data:
-                # For calculated leads, calculate from I and II
-                if lead in ["III", "aVR", "aVL", "aVF", "-aVR"]:
-                    if "I" in saved_ecg_data['leads'] and "II" in saved_ecg_data['leads']:
-                        lead_i_data = saved_ecg_data['leads']["I"]
-                        lead_ii_data = saved_ecg_data['leads']["II"]
-                        
-                        # Ensure same length
-                        min_len = min(len(lead_i_data), len(lead_ii_data))
-                        lead_i_data = lead_i_data[:min_len]
-                        lead_ii_data = lead_ii_data[:min_len]
-                        
-                        # IMPORTANT: Subtract baseline from Lead I and Lead II BEFORE calculating derived leads
-                        # This ensures calculated leads are centered around 0, not around baseline
-                        baseline_adc = 2000.0
-                        lead_i_centered = np.array(lead_i_data, dtype=float) - baseline_adc
-                        lead_ii_centered = np.array(lead_ii_data, dtype=float) - baseline_adc
-                        
-                        # Calculate derived lead from centered values
-                        calculated_data = calculate_derived_lead(lead, lead_i_centered, lead_ii_centered)
-                        if calculated_data is not None:
-                            raw_data = calculated_data.tolist() if isinstance(calculated_data, np.ndarray) else calculated_data
-                            print(f" Calculated {lead} from saved I and II data (baseline-subtracted): {len(raw_data)} points")
-                        else:
-                            # Fallback to saved data if calculation fails
-                            lead_name_for_saved = lead.replace("-aVR", "aVR")
-                            if lead_name_for_saved in saved_ecg_data['leads']:
-                                raw_data = saved_ecg_data['leads'][lead_name_for_saved]
-                                if lead == "-aVR":
-                                    raw_data = [-x for x in raw_data]  # Invert for -aVR
-                            else:
-                                raw_data = []
-                    else:
-                        print(f" Cannot calculate {lead}: I or II data missing in saved file")
-                        raw_data = []
-                else:
-                    # For non-calculated leads, use saved data directly
-                    lead_name_for_saved = lead.replace("-aVR", "aVR")  # Handle -aVR case
-                    if lead_name_for_saved in saved_ecg_data['leads']:
-                        raw_data = saved_ecg_data['leads'][lead_name_for_saved]
-                        if lead == "-aVR":
-                            raw_data = [-x for x in raw_data]  # Invert for -aVR
-                    else:
-                        raw_data = []
-                
-                if len(raw_data) > 0:
-                    # Check if saved data has enough samples for calculated time window
-                    saved_data_samples = len(raw_data)
-                    if saved_data_samples < num_samples_to_capture:
-                        print(f" SAVED FILE {lead} has only {saved_data_samples} samples, need {num_samples_to_capture} for {calculated_time_window:.2f}s window")
-                        print(f"   Will use ALL saved data ({saved_data_samples} samples) - may show fewer beats than calculated")
-                        # Use all available saved data (don't filter)
-                        raw_data_to_use = raw_data
-                    else:
-                        # Apply time window filtering based on calculated window
-                        raw_data_to_use = raw_data[-num_samples_to_capture:]
-                    
-                    if len(raw_data_to_use) > 0 and np.std(raw_data_to_use) > 0.01:
-                        real_ecg_data = np.array(raw_data_to_use)
-                        real_data_available = True
-                        time_window_str = f"{calculated_time_window:.2f}s" if calculated_time_window else "auto"
-                        actual_time_window = len(real_ecg_data) / computed_sampling_rate if computed_sampling_rate > 0 else 0
-                        print(f"✅ Using SAVED FILE {lead} data: {len(real_ecg_data)} points (requested: {time_window_str}, actual: {actual_time_window:.2f}s, std: {np.std(real_ecg_data):.2f})")
-            
-            # Priority 2: Fallback to live dashboard data (if saved data not available OR has insufficient samples)
-            # Check if live data has MORE samples than saved data
-            if ecg_test_page and hasattr(ecg_test_page, 'data'):
-                lead_to_index = {
-                    "I": 0, "II": 1, "III": 2, "aVR": 3, "aVL": 4, "aVF": 5,
-                    "V1": 6, "V2": 7, "V3": 8, "V4": 9, "V5": 10, "V6": 11
-                }
-                
-                live_data_available = False
-                live_data_samples = 0
-                
-                # For calculated leads, calculate from live I and II
-                if lead in ["III", "aVR", "aVL", "aVF", "-aVR"]:
-                    if len(ecg_test_page.data) > 1:  # Need at least I and II
-                        lead_i_data = ecg_test_page.data[0]  # I
-                        lead_ii_data = ecg_test_page.data[1]  # II
-                        
-                        if len(lead_i_data) > 0 and len(lead_ii_data) > 0:
-                            # Ensure same length
-                            min_len = min(len(lead_i_data), len(lead_ii_data))
-                            lead_i_slice = lead_i_data[-min_len:] if len(lead_i_data) >= min_len else lead_i_data
-                            lead_ii_slice = lead_ii_data[-min_len:] if len(lead_ii_data) >= min_len else lead_ii_data
-                            
-                            # IMPORTANT: Subtract baseline from Lead I and Lead II BEFORE calculating derived leads
-                            # This ensures calculated leads are centered around 0, not around baseline
-                            baseline_adc = 2000.0
-                            lead_i_centered = np.array(lead_i_slice, dtype=float) - baseline_adc
-                            lead_ii_centered = np.array(lead_ii_slice, dtype=float) - baseline_adc
-                            
-                            # Calculate derived lead from centered values
-                            calculated_data = calculate_derived_lead(lead, lead_i_centered, lead_ii_centered)
-                            if calculated_data is not None:
-                                live_data_samples = len(calculated_data)
-                                use_live_data = False
-                                if not real_data_available:
-                                    use_live_data = True
-                                elif live_data_samples > saved_data_samples:
-                                    use_live_data = True
-                                
-                                if use_live_data:
-                                    raw_data = calculated_data
-                                    if len(raw_data) >= num_samples_to_capture:
-                                        raw_data = raw_data[-num_samples_to_capture:]
-                                    if len(raw_data) > 0 and np.std(raw_data) > 0.01:
-                                        real_ecg_data = np.array(raw_data)
-                                        real_data_available = True
-                                        actual_time_window = len(real_ecg_data) / computed_sampling_rate if computed_sampling_rate > 0 else 0
-                
-                # For non-calculated leads, use existing logic
-                if not real_data_available:
-                    if lead == "-aVR" and len(ecg_test_page.data) > 3:
-                        live_data_samples = len(ecg_test_page.data[3])
-                    elif lead in lead_to_index and len(ecg_test_page.data) > lead_to_index[lead]:
-                        live_data_samples = len(ecg_test_page.data[lead_to_index[lead]])
-                    
-                    # Use live data if: (1) saved data not available OR (2) live data has MORE samples
-                    use_live_data = False
-                    if not real_data_available:
-                        use_live_data = True
-                    elif live_data_samples > saved_data_samples:
-                        use_live_data = True
-                    
-                    if use_live_data:
-                        if lead == "-aVR" and len(ecg_test_page.data) > 3:
-                            # For -aVR, use filtered inverted aVR data
-                            raw_data = ecg_test_page.data[3]
-                            # Check if we have enough samples, otherwise use all available
-                            if len(raw_data) >= num_samples_to_capture:
-                                raw_data = raw_data[-num_samples_to_capture:]
-                            # Check if data is not all zeros or flat
-                            if len(raw_data) > 0 and np.std(raw_data) > 0.01:
-                                # STEP 1: Capture ORIGINAL dashboard data (NO gain applied)
-                                real_ecg_data = np.array(raw_data)
-                                
-                                real_data_available = True
-                                actual_time_window = len(real_ecg_data) / computed_sampling_rate if computed_sampling_rate > 0 else 0
-                                if is_demo_mode and time_window_seconds is not None:
-                                    pass
-                                else:
-                                    time_window_str = f"{calculated_time_window:.2f}s" if calculated_time_window else "auto"
-                            else:
-                                pass
-                        elif lead in lead_to_index and len(ecg_test_page.data) > lead_to_index[lead]:
-                            # Get filtered real data for this lead
-                            lead_index = lead_to_index[lead]
-                            if len(ecg_test_page.data[lead_index]) > 0:
-                                raw_data = ecg_test_page.data[lead_index]
-                                # Check if we have enough samples, otherwise use all available
-                                if len(raw_data) >= num_samples_to_capture:
-                                    raw_data = raw_data[-num_samples_to_capture:]
-                                # Check if data has variation (not all zeros or flat line)
-                                if len(raw_data) > 0 and np.std(raw_data) > 0.01:
-                                    # STEP 1: Capture ORIGINAL dashboard data (NO gain applied)
-                                    real_ecg_data = np.array(raw_data)
-                                    
-                                    real_data_available = True
-                                    actual_time_window = len(real_ecg_data) / computed_sampling_rate if computed_sampling_rate > 0 else 0
-                                    if is_demo_mode and time_window_seconds is not None:
-                                        pass
-                                    else:
-                                        time_window_str = f"{calculated_time_window:.2f}s" if calculated_time_window else "auto"
-                                else:
-                                    pass
-                            else:
-                                pass
-            
-            if real_data_available and len(real_ecg_data) > 0:
-                # Draw ALL REAL ECG data - NO LIMITS
-                ecg_width = 460
-                ecg_height = 45
-                
-                # Create time array for ALL data
-                t = np.linspace(x_pos, x_pos + ecg_width, len(real_ecg_data))
-                
-                
-                
-                # Step 1: Convert ADC data to numpy array
-                adc_data = np.array(real_ecg_data, dtype=float)
-                
-                # Step 1: Apply baseline correction based on data type
-                data_mean = np.mean(adc_data)
-                baseline_adc = 2000.0
-                is_calculated_lead = lead in ["III", "aVR", "aVL", "aVF", "-aVR"]
-                
-                if abs(data_mean - 2000.0) < 500:  # Data is close to baseline 2000 (raw ADC)
-                    baseline_corrected = adc_data - baseline_adc
-                elif is_calculated_lead:
-                    baseline_corrected = adc_data  # Calculated leads already centered
-                else:
-                    baseline_corrected = adc_data  # Already processed data
-                
-                # Step 2: FORCE CENTER for report - subtract mean to ensure perfect centering
-                # IMPORTANT: Report me har lead apni grid line ke center me dikhni chahiye
-                # Chahe baseline wander kitna bhi ho (respiration mode, Fluke data, etc.)
-                # This ensures waveform is exactly centered on grid line regardless of baseline wander
-                centered_adc = baseline_corrected - np.mean(baseline_corrected)
-                
-                # Step 3: Calculate ADC per box based on wave_gain and lead-specific multiplier
-                # LEAD-SPECIFIC ADC PER BOX CONFIGURATION
-                # Each lead can have different ADC per box multiplier (will be divided by wave_gain)
-                adc_per_box_config = {
-                    'I': 5500.0,
-                    'II': 4955.0, 
-                    'III': 5213.0,  
-                    'aVR': 5353.0, 
-                    'aVL': 5500.0,
-                    'aVF': 5353.0,  
-                    'V1': 5500.0,
-                    'V2': 5500.0,
-                    'V3': 5500.0,
-                    'V4': 7586.0, 
-                    'V5': 7586.0,  
-                    'V6': 8209.0,    
-                    '-aVR': 5500.0,  # For Cabrera sequence
-                }
-                # Get lead-specific ADC per box multiplier (default: 5500)
-                adc_per_box_multiplier = adc_per_box_config.get(lead, 5500.0)
-                # Formula: ADC_per_box = adc_per_box_multiplier / wave_gain_mm_mv
-                # IMPORTANT: Each lead can have different ADC per box multiplier
-                # For 10mm/mV with multiplier 5500: 5500 / 10 = 550 ADC per box
-                # This means: 550 ADC offset = 1 box (5mm) vertical movement
-                adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)  # Avoid division by zero
-                
-                # DEBUG: Log actual ADC values for troubleshooting
-                max_centered_adc = np.max(np.abs(centered_adc))
-                min_centered_adc = np.min(centered_adc)
-                max_centered_adc_abs = np.max(np.abs(centered_adc))
-                expected_boxes = max_centered_adc_abs / adc_per_box
-                
-                # Step 4: Convert ADC offset to boxes (vertical units)
-                # Direct calculation: boxes_offset = centered_adc / adc_per_box
-                # Example: 2000 ADC offset / 750 ADC per box = 2.6666 boxes
-                # BUT: If actual ADC values are smaller (e.g., 375 ADC), then:
-                # 375 ADC / 750 ADC per box = 0.5 boxes (which matches what user sees!)
-                boxes_offset = centered_adc / adc_per_box
-                
-                # Log boxes offset for verification
-                
-                # Step 5: Convert boxes to Y position
-                center_y = y_pos + (ecg_height / 2.0)  # Center of the graph in points
-                # IMPORTANT: Standard ECG paper uses 5mm per box
-                # 5mm = 5 * 2.834645669 points = 14.17 points per box
-                from reportlab.lib.units import mm
-                box_height_points = 5.0 * mm  # Standard ECG: 5mm = 14.17 points per box
-                major_spacing_y = box_height_points  # Use standard ECG spacing (5mm)
-                
-                # Convert boxes offset to Y position
-                ecg_normalized = center_y + (boxes_offset * box_height_points)
-                
-                # DEBUG: Verify Y position calculation
-                
-                
-                # Draw ALL REAL ECG data points
-                from reportlab.graphics.shapes import Path
-                ecg_path = Path(fillColor=None, 
-                               strokeColor=colors.HexColor("#000000"), 
-                               strokeWidth=0.4,
-                               strokeLineCap=1,
-                               strokeLineJoin=1)
-                
-                # DEBUG: Verify actual plotted values
-                actual_min_y = np.min(ecg_normalized)
-                actual_max_y = np.max(ecg_normalized)
-                actual_span_points = actual_max_y - actual_min_y
-                actual_span_boxes = actual_span_points / box_height_points
-                
-                # Start path
-                ecg_path.moveTo(t[0], ecg_normalized[0])
-                
-                # Add ALL points
-                for i in range(1, len(t)):
-                    ecg_path.lineTo(t[i], ecg_normalized[i])
-                
-                # Add path to master drawing
-                master_drawing.add(ecg_path)
-                
-                print(f"✅ Drew {len(real_ecg_data)} ECG data points for Lead {lead}")
+            if lead in lead_drawings:
+                sub = lead_drawings[lead]
+                grp = Group(*sub.contents)
+                grp.translate(x_pos, y_pos)
+                master_drawing.add(grp)
+                successful_graphs += 1
             else:
-                print(f"📋 No real data for Lead {lead} - showing grid only")
-            
-            successful_graphs += 1
-            
+                print(f"No ECG drawing available for lead {lead}")
         except Exception as e:
-            print(f"❌ Error adding Lead {lead}: {e}")
+            print(f"Error drawing lead {lead}: {e}")
             import traceback
             traceback.print_exc()
     
@@ -3244,13 +3099,15 @@ def generate_ecg_report(
     master_drawing.add(p_qrs_label)
 
     # Get RV5 and SV1 amplitudes
-    rv5_amp = data.get('rv5', 0.0)
-    sv1_amp = data.get('sv1', 0.0)
+    rv5_amp = _safe_float(data.get('rv5'), 0.0)
+    sv1_amp = _safe_float(data.get('sv1'), 0.0)
     
     print(f"🔬 Report Generator - Received RV5/SV1 from data:")
     print(f"   rv5: {rv5_amp}, sv1: {sv1_amp}")
     
-    # If missing/zero, compute from V5 and V1 of last 10 seconds
+    # If missing/zero, compute from V5 and V1 of last 10 seconds (GE/Hospital Standard)
+    # CRITICAL: Use RAW ECG data, not display-filtered signals
+    # Measurements must be from median beat, relative to TP baseline (isoelectric segment before P-wave)
     if (rv5_amp<=0 or sv1_amp<=0) and ecg_test_page is not None and hasattr(ecg_test_page,'data'):
         try:
             from scipy.signal import butter, filtfilt, find_peaks
@@ -3259,58 +3116,117 @@ def generate_ecg_report(
                 fs = float(ecg_test_page.sampler.sampling_rate)
             def _get_last(arr):
                 return arr[-int(10*fs):] if arr is not None and len(arr)>int(10*fs) else arr
-            # V5 index 10, V1 index 6
-            v5 = _get_last(ecg_test_page.data[10]) if len(ecg_test_page.data)>10 else None
-            v1 = _get_last(ecg_test_page.data[6]) if len(ecg_test_page.data)>6 else None
-            if v5 is not None and len(v5)>int(2*fs):
+            # V5 index 10, V1 index 6 - Get RAW data
+            v5_raw = _get_last(ecg_test_page.data[10]) if len(ecg_test_page.data)>10 else None
+            v1_raw = _get_last(ecg_test_page.data[6]) if len(ecg_test_page.data)>6 else None
+            
+            if v5_raw is not None and len(v5_raw)>int(2*fs):
+                # Apply filter ONLY for R-peak detection (0.5-40 Hz)
+                # Use RAW data for amplitude measurements
                 nyq = fs/2.0
                 b,a = butter(2, [max(0.5/nyq, 0.001), min(40.0/nyq,0.99)], btype='band')
-                v5f = filtfilt(b,a, np.asarray(v5))
+                v5f = filtfilt(b,a, np.asarray(v5_raw))
                 env = np.convolve(np.square(np.diff(v5f)), np.ones(int(0.15*fs))/(0.15*fs), mode='same')
                 r,_ = find_peaks(env, height=np.mean(env)+0.5*np.std(env), distance=int(0.6*fs))
                 vals=[]
                 for rr in r[1:-1]:
-                    qs = max(0, rr-int(0.08*fs)); qe = min(len(v5f), rr+int(0.08*fs))
-                    base = np.mean(v5f[max(0,qs-int(0.05*fs)):qs])
-                    vals.append(np.max(v5f[qs:qe])-base)
-                if len(vals)>0 and rv5_amp<=0: rv5_amp = float(np.median(vals))
-            if v1 is not None and len(v1)>int(2*fs):
+                    # QRS window: ±80ms around R-peak
+                    qs = max(0, rr-int(0.08*fs))
+                    qe = min(len(v5_raw), rr+int(0.08*fs))
+                    if qe > qs:
+                        # Use RAW data for amplitude measurement
+                        qrs_segment = np.asarray(v5_raw[qs:qe])
+                        
+                        # TP baseline: isoelectric segment before P-wave onset (150-350ms before R)
+                        tp_start = max(0, rr-int(0.35*fs))
+                        tp_end = max(0, rr-int(0.15*fs))
+                        if tp_end > tp_start:
+                            tp_segment = np.asarray(v5_raw[tp_start:tp_end])
+                            tp_baseline = np.median(tp_segment)  # Median for robustness
+                        else:
+                            # Fallback: short segment before QRS
+                            tp_baseline = np.median(np.asarray(v5_raw[max(0,qs-int(0.05*fs)):qs]))
+                        
+                        # RV5 = max(QRS) - TP_baseline (positive, in mV)
+                        # Convert from ADC counts to mV: V5 uses 7586 multiplier, 10mm/mV → 1 mV = 1517.2 ADC
+                        r_amp_adc = np.max(qrs_segment) - tp_baseline
+                        if r_amp_adc > 0:
+                            r_amp_mv = r_amp_adc / 1517.2  # Convert ADC to mV
+                            vals.append(r_amp_mv)
+                if len(vals)>0 and rv5_amp<=0: 
+                    rv5_amp = float(np.median(vals))  # Median beat approach
+                    
+            if v1_raw is not None and len(v1_raw)>int(2*fs):
+                # Apply filter ONLY for R-peak detection (0.5-40 Hz)
+                # Use RAW data for amplitude measurements
                 nyq = fs/2.0
                 b,a = butter(2, [max(0.5/nyq, 0.001), min(40.0/nyq,0.99)], btype='band')
-                v1f = filtfilt(b,a, np.asarray(v1))
+                v1f = filtfilt(b,a, np.asarray(v1_raw))
                 env = np.convolve(np.square(np.diff(v1f)), np.ones(int(0.15*fs))/(0.15*fs), mode='same')
                 r,_ = find_peaks(env, height=np.mean(env)+0.5*np.std(env), distance=int(0.6*fs))
                 vals=[]
                 for rr in r[1:-1]:
-                    ss = rr; se = min(len(v1f), rr+int(0.08*fs))
-                    base = np.mean(v1f[max(0,ss-int(0.05*fs)):ss])
-                    vals.append(base-np.min(v1f[ss:se]))
-                if len(vals)>0 and sv1_amp<=0: sv1_amp = float(np.median(vals))
+                    # QRS window: ±80ms around R-peak
+                    ss = rr
+                    se = min(len(v1_raw), rr+int(0.08*fs))
+                    if se > ss:
+                        # Use RAW data for amplitude measurement
+                        qrs_segment = np.asarray(v1_raw[ss:se])
+                        
+                        # TP baseline: isoelectric segment before P-wave onset (150-350ms before R)
+                        tp_start = max(0, rr-int(0.35*fs))
+                        tp_end = max(0, rr-int(0.15*fs))
+                        if tp_end > tp_start:
+                            tp_segment = np.asarray(v1_raw[tp_start:tp_end])
+                            tp_baseline = np.median(tp_segment)  # Median for robustness
+                        else:
+                            # Fallback: short segment before QRS
+                            tp_baseline = np.median(np.asarray(v1_raw[max(0, ss-int(0.05*fs)):ss]))
+                        
+                        # SV1 = min(QRS) - TP_baseline (negative, preserve sign, in mV)
+                        # Convert from ADC counts to mV: V1 uses 5500 multiplier, 10mm/mV → 1 mV = 1100 ADC
+                        s_amp_adc = np.min(qrs_segment) - tp_baseline
+                        if s_amp_adc < 0:  # SV1 must be negative
+                            s_amp_mv = s_amp_adc / 1100.0  # Convert ADC to mV (preserve sign)
+                            vals.append(s_amp_mv)
+                if len(vals)>0 and sv1_amp==0.0:
+                    sv1_amp = float(np.median(vals))  # Median beat approach, negative value
             print(f"🔁 Fallback computed RV5/SV1: RV5={rv5_amp:.4f}, SV1={sv1_amp:.4f}")
         except Exception as e:
             print(f"⚠️ Fallback RV5/SV1 computation failed: {e}")
 
-    # Convert to mV for display (values assumed to be in microvolt-like units; normalize)
-    rv5_mv = rv5_amp / 1000 if rv5_amp > 0 else 1.260  # fallback
-    sv1_mv = sv1_amp / 1000 if sv1_amp > 0 else 0.786  # fallback
+    # Unit conversion: GE/Hospital Standard - Values must be in mV
+    # CRITICAL: calculate_wave_amplitudes() now returns values in mV (converted from ADC counts)
+    # No additional conversion needed - use values directly
+    # GE Standard ranges: RV5 typically 0.5-3.0 mV, SV1 typically -0.5 to -2.0 mV
+    rv5_mv = rv5_amp if rv5_amp > 0 else 0.0
+    sv1_mv = sv1_amp if sv1_amp != 0.0 else 0.0  # SV1 is negative (preserved from calculation)
     
     print(f"   Converted to mV: RV5={rv5_mv:.3f}, SV1={sv1_mv:.3f}")
     
     # SECOND COLUMN - RV5/SV1 (ABOVE ECG GRAPH - shifted further up)
-    rv5_sv_label = String(240, 720, f"RV5/SV1  : {rv5_mv:.3f}/{sv1_mv:.3f}",  # Moved up from 680 to 690
+    # Display SV1 as negative mV (GE/Hospital standard)
+    rv5_sv_label = String(240, 720, f"RV5/SV1  : {rv5_mv:.3f} mV/{sv1_mv:.3f} mV",  # SV1 will show as negative
                           fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv_label)
-
-    # Calculate RV5+SV1 sum
-    rv5_sv1_sum = rv5_mv + sv1_mv
+    
+    # Calculate RV5+SV1 algebraic sum (SV1 is negative, so sum = RV5 + SV1)
+    # For Sokolow-Lyon LVH criteria, use RV5 + |SV1| internally (see line 93)
+    rv5_sv1_sum = rv5_mv + sv1_mv  # Algebraic sum (SV1 negative)
     
     # SECOND COLUMN - RV5+SV1 (ABOVE ECG GRAPH - shifted further up)
-    rv5_sv1_sum_label = String(240, 700, f"RV5+SV1 : {rv5_sv1_sum:.3f}",  # Moved up from 660 to 670
+    rv5_sv1_sum_label = String(240, 700, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV",  # Moved up from 660 to 670
                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv1_sum_label)
 
     # SECOND COLUMN - QTCF (ABOVE ECG GRAPH - shifted further up)
-    qtcf_label = String(240, 682, "QTCF       : 0.049",  # Moved up from 642 to 652----ł
+    qtcf_val = _safe_float(data.get("QTc_Fridericia") or data.get("QTcF_ms") or data.get("QTcF"), None)
+    if qtcf_val and qtcf_val > 0:
+        qtcf_sec = qtcf_val / 1000.0
+        qtcf_text = f"QTCF       : {qtcf_val:.0f} ms ({qtcf_sec:.3f} s)"
+    else:
+        qtcf_text = "QTCF       : --"
+    qtcf_label = String(240, 682, qtcf_text,  # Moved up from 642 to 652
                         fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtcf_label)
 
@@ -3632,7 +3548,7 @@ def generate_ecg_report(
                 "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
                 "P_QRS_T_mm": [p_mm, qrs_mm, t_mm],
                 "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)],
-                "QTCF": 0.049,
+                "QTCF_ms": round(qtcf_val, 1) if 'qtcf_val' in locals() and qtcf_val else None,
             }
         }
 
