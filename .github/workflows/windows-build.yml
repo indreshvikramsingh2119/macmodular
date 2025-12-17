@@ -32,7 +32,7 @@ jobs:
         shell: pwsh
         run: |
           cd src
-          pyinstaller --onefile --noconsole --name CardioXApp --add-data "..\\dummycsv.csv;." --add-data "..\\assets;assets" --add-data "..\\ecg_settings.json;." --add-data "..\\ecg_app.log;." --add-data "..\\users.json;." --add-data "chat_history.json;." main.py
+          pyinstaller --onefile --noconsole --name CardioXApp --add-data "..\\dummycsv.csv;." --add-data "..\\assets;assets" --add-data "..\\ecg_settings.json;." --add-data "..\\users.json;." --add-data "chat_history.json;." main.py
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
