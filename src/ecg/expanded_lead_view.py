@@ -4,11 +4,13 @@ This module provides an expanded view of individual ECG leads with comprehensive
 """
 
 import sys
+import time
 import numpy as np
+from scipy.signal import butter, filtfilt
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QGridLayout,
     QSizePolicy, QScrollArea, QGroupBox, QFormLayout, QLineEdit, QComboBox,
-    QMessageBox, QApplication, QDialog, QGraphicsDropShadowEffect, QSlider
+    QMessageBox, QApplication, QDialog, QGraphicsDropShadowEffect, QSlider, QCheckBox
 )
 from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtCore import Qt, QTimer
@@ -17,6 +19,11 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.patches as patches
 from .arrhythmia_detector import ArrhythmiaDetector
+try:
+    from .ecg_filters import extract_respiration, estimate_baseline_drift
+except ImportError:
+    extract_respiration = None
+    estimate_baseline_drift = None
 
 class PQRSTAnalyzer:
     """Analyze ECG signal to detect P, Q, R, S, T waves and calculate metrics"""
@@ -352,8 +359,8 @@ class ExpandedLeadView(QDialog):
         self._parent = parent
         self.analyzer = PQRSTAnalyzer(sampling_rate)
         self.arrhythmia_detector = ArrhythmiaDetector(sampling_rate)
-        # Display gain to make waves visually smaller (half-height)
-        self.display_gain = 0.5
+        # Display gain (no pre-scaling; gain applied once at display stage)
+        self.display_gain = 1.0
 
         self.amplification = 1.0  # Amplification factor
         self.min_amplification = 0.1  # Minimum 10% of original
@@ -364,6 +371,20 @@ class ExpandedLeadView(QDialog):
 
         # Store the baseline (mean) of the signal for proper zooming
         self.signal_baseline = 0.0
+
+        # 🏥 HOSPITAL MONITOR: Simple baseline removal (display only)
+        # Single low-frequency baseline removal (≤0.1 Hz equivalent)
+        # No repeated recentering, no EMA, no buffer tricks
+        
+        # Respiration plotting support (secondary Y-axis with dynamic scaling)
+        self.respiration_ax = None  # Secondary axis for respiration (if needed)
+        self.respiration_ylim = None  # Dynamic Y-limits for respiration (percentile-based)
+        self.respiration_data = None  # Respiration waveform data (if available)
+        self.use_clean_view = True
+        self.show_respiration = True
+        self.show_median_overlay = True
+        self.show_markers = False
+        self.show_quality = True
 
         # Store detected arrhythmia events as (time_seconds, label)
         self.arrhythmia_events = []
@@ -664,6 +685,27 @@ class ExpandedLeadView(QDialog):
             border: none;
         """)
         control_layout.addWidget(info_label)
+
+        # Toggles (display-only UX)
+        self.clean_view_toggle = QCheckBox("Clean display")
+        self.clean_view_toggle.setChecked(True)
+        self.clean_view_toggle.stateChanged.connect(self.toggle_clean_view)
+        control_layout.addWidget(self.clean_view_toggle)
+
+        self.resp_toggle = QCheckBox("Respiration")
+        self.resp_toggle.setChecked(True)
+        self.resp_toggle.stateChanged.connect(self.toggle_respiration)
+        control_layout.addWidget(self.resp_toggle)
+
+        self.median_toggle = QCheckBox("Median beat")
+        self.median_toggle.setChecked(True)
+        self.median_toggle.stateChanged.connect(self.toggle_median_overlay)
+        control_layout.addWidget(self.median_toggle)
+
+        self.marker_toggle = QCheckBox("Markers")
+        self.marker_toggle.setChecked(False)
+        self.marker_toggle.stateChanged.connect(self.toggle_markers)
+        control_layout.addWidget(self.marker_toggle)
         
         control_layout.addStretch()
 
@@ -871,13 +913,56 @@ class ExpandedLeadView(QDialog):
                 # Fallback: use sampling rate
                 time = np.arange(len(self.ecg_data)) / self.sampling_rate
         
+        # 🫀 DISPLAY: Low-frequency baseline anchor (removes respiration from baseline)
+        # Extract very-low-frequency baseline (< 0.3 Hz) to prevent baseline from "breathing"
+        try:
+            # Initialize slow anchor if needed
+            if not hasattr(self, '_baseline_anchor'):
+                self._baseline_anchor = 0.0
+                self._baseline_alpha_slow = 0.0005  # Monitor-grade: ~4 sec time constant at 500 Hz
+            
+            if len(self.ecg_data) > 0:
+                # Extract low-frequency baseline estimate (removes respiration 0.1-0.35 Hz)
+                baseline_estimate = self._extract_low_frequency_baseline(self.ecg_data, self.sampling_rate)
+                
+                # Update anchor with slow EMA (tracks only very-low-frequency drift)
+                self._baseline_anchor = (1 - self._baseline_alpha_slow) * self._baseline_anchor + self._baseline_alpha_slow * baseline_estimate
+                
+                # Subtract anchor
+                ecg_filtered = self.ecg_data - self._baseline_anchor
+            else:
+                ecg_filtered = self.ecg_data
+        except Exception as filter_error:
+            # Fallback: simple mean if low-frequency extraction fails
+            ecg_filtered = self.ecg_data - np.mean(self.ecg_data) if len(self.ecg_data) > 0 else self.ecg_data
+            print(f"⚠️ Expanded view init filter error: {filter_error}")
+        
         # Plot at 1.0x to establish baseline
-        scaled = self.ecg_data * self.display_gain * 1.0  # Use 1.0x for baseline
+        scaled = ecg_filtered * self.display_gain * 1.0  # Use 1.0x for baseline
         
         # Calculate and store the baseline (mean) for proper zooming
-        self.signal_baseline = np.mean(scaled)
+        self.signal_baseline = 0.0  # Signal is centered at zero after filtering
         
-        self.ax.plot(time, scaled, color='#0984e3', linewidth=1.0, label='ECG Signal')
+        # Ensure time and scaled arrays match
+        if len(time) != len(scaled):
+            min_len = min(len(time), len(scaled))
+            time = time[:min_len]
+            scaled = scaled[:min_len]
+        
+        if len(scaled) > 0:
+            # Ensure we have valid (non-NaN) data
+            valid_mask = ~np.isnan(scaled)
+            if np.any(valid_mask):
+                if np.all(valid_mask):
+                    self.ax.plot(time, scaled, color='#0984e3', linewidth=1.0, label='ECG Signal')
+                else:
+                    # Plot only valid segments
+                    time_valid = time[valid_mask]
+                    scaled_valid = scaled[valid_mask]
+                    if len(time_valid) > 1:
+                        self.ax.plot(time_valid, scaled_valid, color='#0984e3', linewidth=1.0, label='ECG Signal')
+            else:
+                print(f"All data is NaN in expanded view initialization for lead {self.lead_name}")
         
         # self.ax.set_xlabel('Time (seconds)', fontsize=14, fontweight='bold', color='#34495e')
         self.ax.set_ylabel('Amplitude (mV)', fontsize=14, fontweight='bold', color='#34495e')
@@ -906,11 +991,12 @@ class ExpandedLeadView(QDialog):
         self.ax.set_xlim(0, max(time) if len(time) > 0 else 1)
         
         # Store fixed y-limits based on original data (1.0x amplification)
+        self.display_ylim = None
         if len(self.ecg_data) > 0:
             y_margin = (np.max(scaled) - np.min(scaled)) * 0.1
             y_min = np.min(scaled) - y_margin
             y_max = np.max(scaled) + y_margin
-            self.fixed_ylim = (y_min, y_max)
+            self.display_ylim = (y_min, y_max)
             self.ax.set_ylim(y_min, y_max)
 
         if hasattr(self, 'canvas'):
@@ -1053,15 +1139,30 @@ class ExpandedLeadView(QDialog):
                 # Find the lead index for this lead
                 lead_index = self.get_lead_index()
                 if lead_index is not None and lead_index < len(parent.data):
+                    # 🫀 CLINICAL: Get RAW data from parent's raw buffer
+                    # parent.data[lead_index] contains raw clinical data, NOT display-processed
                     new_data = parent.data[lead_index]
                     if len(new_data) > 0:
+                        # Store raw clinical data for analysis
                         self.ecg_data = np.array(new_data)
                         # Only auto-advance if user hasn't manually positioned the slider
                         if not self.manual_view and not self.history_slider_active:
                             total_duration = len(self.ecg_data) / max(1.0, self.sampling_rate)
                             self.view_window_offset = max(0.0, total_duration - self.view_window_duration)
-                        self.analyze_ecg()
+                        
+                        # Update plot first (visual update)
                         self.update_plot()
+                        
+                        # Then analyze ECG (including arrhythmia detection) - call periodically, not every frame
+                        # Only analyze every 500ms to avoid performance issues
+                        if not hasattr(self, '_last_analysis_time'):
+                            self._last_analysis_time = 0.0
+                        
+                        current_time = time.time()
+                        if current_time - self._last_analysis_time >= 0.5:  # Analyze every 500ms
+                            self.analyze_ecg()
+                            self._last_analysis_time = current_time
+                        
                         self.update_history_slider()
 
                         # Update button states to reflect parent's status
@@ -1078,6 +1179,155 @@ class ExpandedLeadView(QDialog):
             'V1': 6, 'V2': 7, 'V3': 8, 'V4': 9, 'V5': 10, 'V6': 11
         }
         return lead_mapping.get(self.lead_name)
+    
+    def _apply_display_bandpass(self, signal, fs=500.0, low=0.05, high=40.0, order=2):
+        """Display-only bandpass to remove DC drift (<0.05 Hz) and very high freq noise."""
+        if len(signal) < order * 3:
+            return signal
+        try:
+            nyq = 0.5 * fs
+            low_n = max(low / nyq, 1e-5)
+            high_n = min(high / nyq, 0.999)
+            b, a = butter(order, [low_n, high_n], btype="bandpass")
+            return filtfilt(b, a, signal)
+        except Exception:
+            return signal
+
+    def _remove_respiration_display(self, signal, fs=500.0, window_sec=2.0):
+        """Display-only respiration suppression via moving-average subtraction (~0.5 Hz HP)."""
+        if len(signal) == 0:
+            return signal
+        try:
+            win = int(max(3, window_sec * fs))
+            win = min(win, len(signal))
+            if win < 3:
+                return signal
+            kernel = np.ones(win) / win
+            baseline = np.convolve(signal, kernel, mode="same")
+            return signal - baseline
+        except Exception:
+            return signal
+
+    def _compute_median_beat(self, signal, r_peaks, fs, pre_sec=0.2, post_sec=0.4):
+        """Display-only median beat (for overlay)."""
+        if signal is None or len(signal) == 0 or r_peaks is None or len(r_peaks) < 2:
+            return None, None
+        pre = int(pre_sec * fs)
+        post = int(post_sec * fs)
+        beats = []
+        for r in r_peaks:
+            start = r - pre
+            end = r + post
+            if start < 0 or end > len(signal):
+                continue
+            beat = signal[start:end]
+            if len(beat) == pre + post:
+                beats.append(beat)
+        if len(beats) == 0:
+            return None, None
+        beats_arr = np.vstack(beats)
+        median = np.median(beats_arr, axis=0)
+        t = (np.arange(len(median)) - pre) / fs
+        return t, median
+
+    def toggle_clean_view(self, state):
+        self.use_clean_view = state == Qt.Checked
+        self.update_plot()
+
+    def toggle_respiration(self, state):
+        self.show_respiration = state == Qt.Checked
+        self.update_plot()
+
+    def toggle_median_overlay(self, state):
+        self.show_median_overlay = state == Qt.Checked
+        self.update_plot()
+
+    def toggle_markers(self, state):
+        self.show_markers = state == Qt.Checked
+        self.update_plot()
+
+    def _apply_display_highpass(self, signal, fs, cutoff_hz=0.3):
+        """
+        Display-only high-pass (~0.3 Hz) applied after baseline anchoring.
+        Does NOT affect raw data or measurements.
+        """
+        if len(signal) == 0:
+            return signal
+        try:
+            # Approximate 0.3 Hz HPF via moving-average subtraction (~3.5s window ≈0.28 Hz)
+            window_samples = int(max(10, fs * 3.5))
+            window_samples = min(window_samples, len(signal))
+            if window_samples < 10:
+                return signal
+            kernel = np.ones(window_samples) / window_samples
+            baseline = np.convolve(signal, kernel, mode="same")
+            return signal - baseline
+        except Exception:
+            return signal
+    
+    def calculate_respiration_ylim(self, respiration_signal):
+        """Calculate dynamic Y-limits for respiration using percentiles.
+        Ensures respiration amplitude is fully visible without cropping.
+        
+        Args:
+            respiration_signal: Respiration waveform array
+            
+        Returns:
+            Tuple of (y_min, y_max) for respiration Y-axis
+        """
+        if len(respiration_signal) == 0:
+            return (-100, 100)  # Default range
+        
+        # Remove NaN and invalid values
+        valid_resp = respiration_signal[~np.isnan(respiration_signal)]
+        if len(valid_resp) == 0:
+            return (-100, 100)
+        
+        # Use percentiles to avoid outliers (robust scaling)
+        p1 = np.percentile(valid_resp, 1)   # 1st percentile
+        p99 = np.percentile(valid_resp, 99)  # 99th percentile
+        
+        # Add padding (10% margin) to ensure full visibility
+        range_padding = (p99 - p1) * 0.1
+        y_min = p1 - range_padding
+        y_max = p99 + range_padding
+        
+        # Ensure minimum range for visibility
+        min_range = 50.0
+        if (y_max - y_min) < min_range:
+            center = (y_max + y_min) / 2.0
+            y_min = center - min_range / 2.0
+            y_max = center + min_range / 2.0
+        
+        return (y_min, y_max)
+    
+    def extract_respiration_from_ecg(self, ecg_signal):
+        """Extract respiration waveform from ECG signal (optional, for display).
+        Uses ecg_filters functions if available.
+        
+        Args:
+            ecg_signal: Raw ECG signal array
+            
+        Returns:
+            Respiration waveform array, or None if extraction fails
+        """
+        if extract_respiration is None or estimate_baseline_drift is None:
+            return None
+        
+        try:
+            if len(ecg_signal) < 100:  # Need minimum data
+                return None
+            
+            # Extract baseline drift first
+            drift = estimate_baseline_drift(ecg_signal, self.sampling_rate)
+            
+            # Extract respiration from drift signal
+            respiration = extract_respiration(drift, self.sampling_rate)
+            
+            return respiration
+        except Exception as e:
+            print(f"⚠️ Error extracting respiration: {e}")
+            return None
     
     def update_plot(self):
         """Update the ECG plot with new data"""
@@ -1104,18 +1354,50 @@ class ExpandedLeadView(QDialog):
                 return
 
             window_signal = self.ecg_data[start_idx:end_idx]
-            time = np.arange(start_idx, end_idx) / self.sampling_rate
-            base_scaled = window_signal * self.display_gain
-            self.signal_baseline = np.mean(base_scaled)
-            scaled = self.signal_baseline + (base_scaled - self.signal_baseline) * self.amplification
             
-            # Determine y-limits once based on entire dataset for consistent scaling
-            if self.fixed_ylim is None and len(self.ecg_data) > 0:
-                baseline_full = self.ecg_data * self.display_gain
-                y_margin = (np.max(baseline_full) - np.min(baseline_full)) * 0.15 if np.max(baseline_full) != np.min(baseline_full) else 1.0
-                y_min = np.min(baseline_full) - y_margin
-                y_max = np.max(baseline_full) + y_margin
-                self.fixed_ylim = (y_min, y_max)
+            # Ensure we have valid data
+            if len(window_signal) == 0:
+                return
+            
+            # ---------------- DISPLAY-ONLY PIPELINE ----------------
+            # Clinical signal (raw) is untouched; display_signal is for plotting only.
+            display_signal = window_signal.copy()
+            try:
+                # Mode toggle (default clean)
+                if self.use_clean_view:
+                    display_signal = self._apply_display_bandpass(display_signal, fs=self.sampling_rate, low=0.05, high=40.0)
+                    display_signal = self._remove_respiration_display(display_signal, fs=self.sampling_rate, window_sec=2.0)
+                # clinical view leaves display_signal untouched
+            except Exception as filter_error:
+                print(f"⚠️ Expanded view display filter error: {filter_error}")
+            
+            # ---------------- DISPLAY SCALING (apply gain ONCE, last) ----------------
+            wave_gain_mm = 10.0
+            try:
+                if hasattr(self._parent, "settings_manager"):
+                    wave_gain_mm = float(self._parent.settings_manager.get_wave_gain())
+            except Exception:
+                wave_gain_mm = 10.0
+            gain = wave_gain_mm / 10.0  # 10mm/mV = 1.0x baseline
+
+            display_signal = display_signal * gain * self.amplification
+            
+            # Create time array matching the signal length
+            time = np.arange(len(display_signal), dtype=float) / self.sampling_rate + (start_idx / self.sampling_rate)
+
+            # 🏥 Y-axis: percentile target with EMA smoothing (calm, paper-like)
+            if len(display_signal) > 0:
+                p99 = np.percentile(np.abs(display_signal), 99)
+            else:
+                p99 = 1.0
+            p99 = max(0.2, p99)
+            target_ylim = 1.3 * p99
+            if not hasattr(self, "_ylim_smooth") or self._ylim_smooth is None:
+                self._ylim_smooth = target_ylim
+            else:
+                alpha = 0.05  # slow, monitor-grade
+                self._ylim_smooth = (1 - alpha) * self._ylim_smooth + alpha * target_ylim
+            ylim_val = self._ylim_smooth
 
             self.ax.clear()
 
@@ -1124,14 +1406,13 @@ class ExpandedLeadView(QDialog):
                 self.heatmap_overlay is not None
                 and self.heatmap_time_axis is not None
                 and len(self.heatmap_time_axis) > 0
-                and self.fixed_ylim is not None
             ):
                 window_half = max(0.001, self.heatmap_window_step / 2.0)
                 extent = [
                     self.heatmap_time_axis[0] - window_half,
                     self.heatmap_time_axis[-1] + window_half,
-                    self.fixed_ylim[0],
-                    self.fixed_ylim[1]
+                    -ylim_val,
+                    ylim_val,
                 ]
                 self.ax.imshow(
                     self.heatmap_overlay,
@@ -1142,7 +1423,43 @@ class ExpandedLeadView(QDialog):
                     zorder=0,
                 )
 
-            self.ax.plot(time, scaled, color='#0984e3', linewidth=1.0, label='ECG Signal', zorder=1)
+            # Ensure time and display_signal arrays have matching lengths
+            if len(time) != len(display_signal):
+                min_len = min(len(time), len(display_signal))
+                time = time[:min_len]
+                display_signal = display_signal[:min_len]
+            
+            # Only plot if we have valid data
+            waveform_alpha = 1.0
+            quality_text = None
+            if len(display_signal) > 0:
+                # Remove NaN values for plotting (replace with interpolation or skip)
+                valid_mask = ~np.isnan(display_signal)
+                if np.any(valid_mask):
+                    # Simple beat quality: peak-to-peak vs threshold
+                    try:
+                        ptp = np.ptp(display_signal[valid_mask])
+                        if self.show_quality and ptp < 0.15:
+                            waveform_alpha = 0.4
+                            quality_text = "Quality: Noisy/Low"
+                        elif self.show_quality:
+                            quality_text = "Quality: Clean"
+                    except Exception:
+                        pass
+                    # Plot only valid points
+                    if np.all(valid_mask):
+                        # All data is valid - plot normally
+                        self.ax.plot(time, display_signal, color='#0984e3', linewidth=1.0, label='ECG Signal', zorder=1, alpha=waveform_alpha)
+                    else:
+                        # Some NaN values - plot segments
+                        time_valid = time[valid_mask]
+                        scaled_valid = display_signal[valid_mask]
+                        if len(time_valid) > 1:
+                            self.ax.plot(time_valid, scaled_valid, color='#0984e3', linewidth=1.0, label='ECG Signal', zorder=1, alpha=waveform_alpha)
+                else:
+                    print(f"⚠️ All data is NaN in expanded view for lead {self.lead_name}")
+            else:
+                print(f"⚠️ No data to plot in expanded view for lead {self.lead_name}: len={len(display_signal)}")
             
             # Overlay vertical markers at detected arrhythmia event times within the visible window
             if hasattr(self, "arrhythmia_events") and self.arrhythmia_events:
@@ -1153,8 +1470,8 @@ class ExpandedLeadView(QDialog):
                         self.ax.axvline(evt_time, color="#e74c3c", linestyle="--", linewidth=1.0, alpha=0.9, zorder=2)
                         # Small label at the top of the plot
                         try:
-                            ylim = self.fixed_ylim if self.fixed_ylim is not None else self.ax.get_ylim()
-                            y_top = ylim[1]
+                            ylim_current = self.ax.get_ylim()
+                            y_top = ylim_current[1]
                             self.ax.text(
                                 evt_time,
                                 y_top,
@@ -1182,10 +1499,142 @@ class ExpandedLeadView(QDialog):
             self.ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='#bdc3c7')
             self.ax.spines['top'].set_visible(False)
             self.ax.spines['right'].set_visible(False)
-            self.ax.set_xlim(time[0], time[-1])
+            # Set x-limits only if we have valid time data
+            if len(time) > 0:
+                self.ax.set_xlim(time[0], time[-1])
+            else:
+                self.ax.set_xlim(0, 1)  # Fallback
             
-            if self.fixed_ylim is not None:
-                self.ax.set_ylim(self.fixed_ylim[0], self.fixed_ylim[1])
+            # Y-limits are already set above with amplification scaling - don't override here
+            
+            # Median beat overlay (display-only)
+            try:
+                if self.show_median_overlay and len(display_signal) > 0:
+                    r_peaks_local = self.analyzer._detect_r_peaks(window_signal)
+                    t_median, median_beat = self._compute_median_beat(display_signal, r_peaks_local, self.sampling_rate)
+                    if t_median is not None and median_beat is not None and len(t_median) == len(median_beat):
+                        # Align median beat to first valid R peak in window
+                        if len(r_peaks_local) > 0:
+                            r0 = r_peaks_local[0]
+                            t0 = time[0] + r0 / self.sampling_rate
+                            self.ax.plot(t0 + t_median, median_beat, color="#7f8c8d", linewidth=2.0, alpha=0.6, label="Median beat")
+            except Exception as median_err:
+                print(f"⚠️ Median beat overlay error: {median_err}")
+
+            # Isoelectric baseline (TP segment estimate, display units)
+            try:
+                if len(display_signal) > 0:
+                    r_peaks_local = self.analyzer._detect_r_peaks(window_signal)
+                    tp_samples = []
+                    pre_tp = int(0.35 * self.sampling_rate)
+                    tp_len = int(0.15 * self.sampling_rate)
+                    for r in r_peaks_local:
+                        start = max(0, r - pre_tp)
+                        end = min(len(window_signal), start + tp_len)
+                        if end > start:
+                            tp_samples.append(np.median(window_signal[start:end]))
+                    if len(tp_samples) > 0:
+                        tp_baseline = np.median(tp_samples)
+                        baseline_disp = tp_baseline * gain * self.amplification
+                        self.ax.axhline(baseline_disp, color="#95a5a6", linestyle="--", linewidth=1.0, alpha=0.7, label="Isoelectric (TP)")
+            except Exception as tp_err:
+                print(f"⚠️ Baseline overlay error: {tp_err}")
+
+            # Measurement markers (optional)
+            try:
+                if self.show_markers:
+                    analysis_local = self.analyzer.analyze_signal(window_signal)
+                    r_peaks = analysis_local.get("r_peaks", [])
+                    p_peaks = analysis_local.get("p_peaks", [])
+                    q_peaks = analysis_local.get("q_peaks", [])
+                    s_peaks = analysis_local.get("s_peaks", [])
+                    t_peaks = analysis_local.get("t_peaks", [])
+                    def _plot_marker(peaks, color, label):
+                        for idx in peaks:
+                            if 0 <= idx < len(time):
+                                self.ax.axvline(time[idx], color=color, linestyle="--", linewidth=0.8, alpha=0.8)
+                    _plot_marker(p_peaks, "#8e44ad", "P")
+                    _plot_marker(q_peaks, "#16a085", "Q")
+                    _plot_marker(s_peaks, "#16a085", "S")
+                    _plot_marker(t_peaks, "#e67e22", "T")
+                    # QT span if Q and T exist
+                    if len(q_peaks) > 0 and len(t_peaks) > 0:
+                        q_idx = q_peaks[0]
+                        t_idx = t_peaks[-1]
+                        if q_idx < len(time) and t_idx < len(time) and t_idx > q_idx:
+                            self.ax.hlines(y=ylim_val * 0.8, xmin=time[q_idx], xmax=time[t_idx], colors="#e74c3c", linestyles="-", linewidth=2.0)
+                            self.ax.text((time[q_idx]+time[t_idx])/2, ylim_val*0.82, "QT", color="#e74c3c", ha="center", va="bottom", fontsize=9)
+            except Exception as marker_err:
+                print(f"⚠️ Marker overlay error: {marker_err}")
+
+            # 🫁 RESPIRATION: Plot with separate Y-axis (if respiration data exists)
+            # Respiration uses percentile-based dynamic Y-limits (not fixed like ECG)
+            # This prevents cropping while ECG keeps its fixed Y-axis
+            # No median centering, no EMA clamping - just percentile-based scaling
+            if self.show_respiration and hasattr(self, 'respiration_data') and self.respiration_data is not None:
+                try:
+                    # Extract respiration window matching ECG window
+                    if len(self.respiration_data) > end_idx:
+                        respiration_window = self.respiration_data[start_idx:end_idx]
+                    elif len(self.respiration_data) > start_idx:
+                        respiration_window = self.respiration_data[start_idx:]
+                    else:
+                        respiration_window = self.respiration_data
+                    
+                    # Ensure respiration window matches time array length
+                    if len(respiration_window) > len(time):
+                        respiration_window = respiration_window[:len(time)]
+                    elif len(respiration_window) < len(time):
+                        # Pad or interpolate if needed
+                        time_resp = np.arange(len(respiration_window), dtype=float) / self.sampling_rate + (start_idx / self.sampling_rate)
+                        respiration_window = np.interp(time, time_resp, respiration_window)
+                    
+                    if len(respiration_window) > 0 and len(respiration_window) == len(time):
+                        # Create secondary Y-axis for respiration (if not exists)
+                        if self.respiration_ax is None:
+                            self.respiration_ax = self.ax.twinx()
+                            self.respiration_ax.spines['top'].set_visible(False)
+                            self.respiration_ax.spines['left'].set_visible(False)
+                            self.respiration_ax.spines['right'].set_visible(True)
+                            self.respiration_ax.spines['right'].set_color('#27ae60')
+                            self.respiration_ax.tick_params(axis='y', labelcolor='#27ae60')
+                            self.respiration_ax.set_ylabel('Respiration (mV)', fontsize=12, fontweight='bold', color='#27ae60')
+                        
+                        # Clear previous respiration plot
+                        self.respiration_ax.clear()
+                        self.respiration_ax.spines['top'].set_visible(False)
+                        self.respiration_ax.spines['left'].set_visible(False)
+                        self.respiration_ax.spines['right'].set_visible(True)
+                        self.respiration_ax.spines['right'].set_color('#27ae60')
+                        self.respiration_ax.tick_params(axis='y', labelcolor='#27ae60')
+                        self.respiration_ax.set_ylabel('Respiration (mV)', fontsize=12, fontweight='bold', color='#27ae60')
+                        
+                        # Plot respiration on secondary axis
+                        self.respiration_ax.plot(time, respiration_window, color='#27ae60', linewidth=1.5, 
+                                                 label='Respiration', alpha=0.7, linestyle='--', zorder=1)
+                        
+                        # Calculate percentile-based Y-limits for respiration (dynamic, prevents cropping)
+                        # No median centering, no EMA - just percentile-based scaling
+                        resp_ylim = self.calculate_respiration_ylim(respiration_window)
+                        self.respiration_ax.set_ylim(resp_ylim[0], resp_ylim[1])
+                        self.respiration_ylim = resp_ylim
+                        
+                        # Sync X-axis with ECG
+                        self.respiration_ax.set_xlim(time[0], time[-1])
+                except Exception as resp_error:
+                    print(f"⚠️ Error plotting respiration: {resp_error}")
+            elif self.respiration_ax is not None:
+                # Clear respiration axis if no data
+                self.respiration_ax.clear()
+                self.respiration_ax = None
+
+            # Apply smoothed Y-limits after all overlays
+            self.ax.set_ylim(-ylim_val, ylim_val)
+            if quality_text:
+                try:
+                    self.ax.text(time[0] if len(time) > 0 else 0, ylim_val * 0.9, quality_text, color="#7f8c8d", fontsize=9, va="top")
+                except Exception:
+                    pass
 
             self.canvas.draw()
         except Exception as e:
@@ -1333,10 +1782,19 @@ class ExpandedLeadView(QDialog):
     def analyze_ecg(self):
         """Analyze the ECG signal and update metrics"""
         if self.ecg_data.size == 0:
-            self.arrhythmia_list.setText("No data to analyze.")
+            if hasattr(self, 'arrhythmia_list'):
+                self.arrhythmia_list.setText("No data to analyze.")
             return
         
         try:
+            # Ensure we have enough data for analysis (at least 2 seconds)
+            min_samples = int(2.0 * self.sampling_rate)
+            if len(self.ecg_data) < min_samples:
+                if hasattr(self, 'arrhythmia_list'):
+                    self.arrhythmia_list.setText("Collecting data...")
+                return
+            
+            # Analyze signal for PQRST waves
             analysis = self.analyzer.analyze_signal(self.ecg_data)
             self.calculate_metrics(analysis)
             
@@ -1358,19 +1816,39 @@ class ExpandedLeadView(QDialog):
                         else:
                             print(f"⏳ Waiting for serial data: {data_count}/{min_serial_data_packets} packets - asystole detection disabled")
             
+            # Detect arrhythmias using raw ECG data
+            print(f"🔍 Analyzing arrhythmias for {self.lead_name}: {len(self.ecg_data)} samples, {len(analysis.get('r_peaks', []))} R-peaks detected")
             arrhythmias = self.arrhythmia_detector.detect_arrhythmias(
                 self.ecg_data, 
                 analysis,
                 has_received_serial_data=has_received_serial_data,
                 min_serial_data_packets=min_serial_data_packets
             )
+            print(f"📊 Arrhythmia detection result for {self.lead_name}: {arrhythmias}")
             self.update_arrhythmia_display(arrhythmias)
             
-            # Generate heat map data
-            heat_map_data = self.arrhythmia_detector.detect_arrhythmias_with_probabilities(
-                self.ecg_data, analysis['r_peaks'], window_size=2.0
-            )
-            self.prepare_heatmap_overlay(heat_map_data)
+            # Generate heat map data (optional - don't break if method doesn't exist)
+            try:
+                if len(analysis.get('r_peaks', [])) > 0:
+                    # Check if method exists before calling
+                    if hasattr(self.arrhythmia_detector, 'detect_arrhythmias_with_probabilities'):
+                        heat_map_data = self.arrhythmia_detector.detect_arrhythmias_with_probabilities(
+                            self.ecg_data, analysis['r_peaks'], window_size=2.0
+                        )
+                        self.prepare_heatmap_overlay(heat_map_data)
+                    else:
+                        # Method doesn't exist, clear heatmap
+                        self.heatmap_overlay = None
+                        self.heatmap_time_axis = None
+                else:
+                    # No R-peaks detected, clear heatmap
+                    self.heatmap_overlay = None
+                    self.heatmap_time_axis = None
+            except Exception as heatmap_error:
+                # Heatmap is optional - don't break arrhythmia display
+                print(f"⚠️ Heatmap generation error (non-critical): {heatmap_error}")
+                self.heatmap_overlay = None
+                self.heatmap_time_axis = None
             
             self.update_plot_with_markers(analysis)
             
@@ -1378,8 +1856,11 @@ class ExpandedLeadView(QDialog):
             self.update_history_slider()
         except Exception as e:
             import traceback
-            error_msg = f"Error in ECG analysis: {str(e)}"
+            error_msg = f"Error in ECG analysis for {self.lead_name}: {str(e)}"
             print(error_msg)
+            traceback.print_exc()
+            if hasattr(self, 'arrhythmia_list'):
+                self.arrhythmia_list.setText(f"Analysis error: {str(e)[:50]}")
             print(traceback.format_exc())
             # Still try to show rate-based detection even if other detections fail
             try:
@@ -1416,7 +1897,11 @@ class ExpandedLeadView(QDialog):
                 self.arrhythmia_list.setText(f"Analysis error: {str(e)[:50]}")
     
     def calculate_metrics(self, analysis):
-        """Calculate ECG metrics from analysis results"""
+        """Calculate ECG metrics from analysis results
+        
+        ⚠️ CLINICAL ANALYSIS: Uses self.ecg_data which comes from parent.data[lead_index]
+        This is raw clinical data, NOT display-processed data.
+        """
         try:
             # Check if demo mode is active from parent
             parent = self._parent if hasattr(self, '_parent') else None
@@ -1440,15 +1925,19 @@ class ExpandedLeadView(QDialog):
             )
             
             # Heart Rate & RR Interval - use same calculation as 12-lead page if available
+            # 🫀 CLINICAL: Calculate metrics from RAW clinical data (self.ecg_data)
+            # self.ecg_data comes from parent.data[lead_index] which is raw, not display-processed
             heart_rate = 0
             if parent is not None and hasattr(parent, 'calculate_heart_rate'):
                 try:
+                    # Pass raw clinical data to parent's calculation function
                     heart_rate = int(parent.calculate_heart_rate(self.ecg_data))
                     self.update_metric('heart_rate', max(0, heart_rate))
                     self.update_metric('rr_interval', int(60000 / heart_rate) if heart_rate > 0 else 0)
                 except Exception:
                     heart_rate = 0
             else:
+                # Calculate from R-peaks detected in raw clinical data
                 if len(r_peaks) > 1:
                     rr_intervals = np.diff(r_peaks) / self.sampling_rate * 1000
                     mean_rr = np.mean(rr_intervals)

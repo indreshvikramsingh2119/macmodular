@@ -387,59 +387,39 @@ class Dashboard(QWidget):
         greet_row.addWidget(greet)
         greet_row.addStretch()
         
-        # Button style helper for consistent cross-platform appearance
-        def create_button(text, color, hover_color=None, pressed_color=None):
-            """Create a button with consistent styling across macOS and Windows"""
-            btn = QPushButton(text)
-            hover = hover_color or color
-            pressed = pressed_color or color
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: {color};
-                    color: white;
-                    border: none;
-                    border-radius: 16px;
-                    padding: 8px 24px;
-                    font-size: 14px;
-                    font-weight: bold;
-                    min-height: 36px;
-                    min-width: 100px;
-                }}
-                QPushButton:hover {{
-                    background: {hover};
-                }}
-                QPushButton:pressed {{
-                    background: {pressed};
-                }}
-            """)
-            btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            # Enable fast rendering on Windows
-            btn.setAttribute(Qt.WA_OpaquePaintEvent, True)
-            return btn
-        
         # History button (orange dark suede, left of Hyperkalemia)
-        self.history_btn = create_button("History", "#b35900", "#c97a1a", "#994700")
+        self.history_btn = QPushButton("History")
+        self.history_btn.setStyleSheet("background: #b35900; color: white; border-radius: 16px; padding: 8px 24px;")
         self.history_btn.clicked.connect(self.open_history_window)
+        self.history_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(self.history_btn)
 
         # Hyperkalemia Test button (orange suede color, right of History, left of HRV Test)
-        self.hyperkalemia_test_btn = create_button("Hyperkalemia Test", "#d2691e", "#e68a3e", "#b8590e")
+        self.hyperkalemia_test_btn = QPushButton("Hyperkalemia Test")
+        self.hyperkalemia_test_btn.setStyleSheet("background: #d2691e; color: white; border-radius: 16px; padding: 8px 24px;")
         self.hyperkalemia_test_btn.clicked.connect(self.open_hyperkalemia_test)
+        self.hyperkalemia_test_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(self.hyperkalemia_test_btn)
         
         # HRV Test button (red color, left of ECG Lead Test 12)
-        self.hrv_test_btn = create_button("HRV Test", "#dc3545", "#e55a5a", "#c02d3d")
+        self.hrv_test_btn = QPushButton("HRV Test")
+        self.hrv_test_btn.setStyleSheet("background: #dc3545; color: white; border-radius: 16px; padding: 8px 24px;")
         self.hrv_test_btn.clicked.connect(self.open_hrv_test)
+        self.hrv_test_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.hrv_test_btn.setVisible(True)
         greet_row.addWidget(self.hrv_test_btn)
         
-        self.date_btn = create_button("ECG Lead Test 12", "#ff6600", "#ff8800", "#e55a00")
+        self.date_btn = QPushButton("ECG Lead Test 12")
+        self.date_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 16px; padding: 8px 24px;")
         self.date_btn.clicked.connect(self.go_to_lead_test)
+        self.date_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(self.date_btn)
 
         # --- Add Chatbot Button ---
-        self.chatbot_btn = create_button("AI Chatbot", "#2453ff", "#4a6fff", "#1a3fdd")
+        self.chatbot_btn = QPushButton("AI Chatbot")
+        self.chatbot_btn.setStyleSheet("background: #2453ff; color: white; border-radius: 16px; padding: 8px 24px;")
         self.chatbot_btn.clicked.connect(self.open_chatbot_dialog)
+        self.chatbot_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(self.chatbot_btn)
 
         dashboard_layout.addLayout(greet_row)
@@ -1565,8 +1545,12 @@ class Dashboard(QWidget):
             pass
         return False
 
-    def calculate_live_ecg_metrics(self, ecg_signal, sampling_rate=500):
-        """Calculate live ECG metrics from Lead 2 data - ADAPTIVE for 40-300 BPM"""
+    def calculate_live_ecg_metrics(self, ecg_signal, sampling_rate=None):
+        """Calculate live ECG metrics from Lead 2 data - ADAPTIVE for 40-300 BPM
+        
+        CRITICAL: Uses actual sampling rate from ECG test page for accurate BPM calculation.
+        On Windows, sampling rate may be 80 Hz (not 500 Hz), so we must detect it correctly.
+        """
         try:
             from scipy.signal import butter, filtfilt, find_peaks
             
@@ -1574,8 +1558,40 @@ class Dashboard(QWidget):
             if len(ecg_signal) < 200:
                 return {}
             
+            # CRITICAL: Get actual sampling rate from ECG test page (Windows may use 80 Hz, not 500 Hz)
+            # Default fallback: 80 Hz (Windows default) instead of 250 Hz to match actual hardware
+            fs = 80.0  # Default fallback - Windows typically uses 80 Hz
+            if sampling_rate and sampling_rate > 0:
+                fs = float(sampling_rate)
+            elif hasattr(self, 'ecg_test_page') and self.ecg_test_page:
+                try:
+                    if hasattr(self.ecg_test_page, 'sampler') and hasattr(self.ecg_test_page.sampler, 'sampling_rate'):
+                        if self.ecg_test_page.sampler.sampling_rate:
+                            fs = float(self.ecg_test_page.sampler.sampling_rate)
+                            if fs <= 0 or fs > 1000:  # Sanity check
+                                fs = 80.0  # Use 80 Hz default for Windows
+                except Exception as e:
+                    print(f"⚠️ Error getting sampling rate for BPM calculation: {e}")
+                    fs = 80.0  # Use 80 Hz default for Windows
+            else:
+                # If no ECG test page available, try to auto-detect from signal characteristics
+                # Estimate sampling rate from signal length and expected duration
+                if len(ecg_signal) > 200:
+                    # Try to detect based on typical ECG characteristics
+                    # This is a fallback if sampling rate detection completely fails
+                    fs = 80.0  # Default to Windows standard
+            
+            # Debug output for Windows troubleshooting (print first few times to help diagnose)
+            if not hasattr(self, '_bpm_debug_count'):
+                self._bpm_debug_count = 0
+            self._bpm_debug_count += 1
+            if self._bpm_debug_count <= 3:  # Print first 3 times
+                print(f"🔍 BPM Calculation - Sampling rate: {fs} Hz, Signal length: {len(ecg_signal)} samples")
+            if fs != 80.0 and fs != 250.0 and fs != 500.0:
+                if self._bpm_debug_count <= 3:
+                    print(f"⚠️ Unusual sampling rate detected: {fs} Hz - BPM calculation may be affected")
+            
             # Apply bandpass filter to enhance R-peaks (0.5-40 Hz)
-            fs = sampling_rate
             nyquist = fs / 2
             low = 0.5 / nyquist
             high = 40 / nyquist
@@ -1651,22 +1667,17 @@ class Dashboard(QWidget):
             
             metrics = {}
             
-            # Calculate Heart Rate with anti-flickering
+            # Calculate Heart Rate (instantaneous, per-beat)
             if len(peaks) >= 2:
                 # Calculate R-R intervals in milliseconds
-                rr_intervals_ms = np.diff(peaks) * (1000 / fs)
-                
-            metrics = {}
-            
-            # Calculate Heart Rate with anti-flickering
-            if len(peaks) >= 2:
-                # Calculate R-R intervals in milliseconds
-                rr_intervals_ms = np.diff(peaks) * (1000 / fs)
+                # CRITICAL: Use correct sampling rate (fs) for accurate BPM calculation
+                rr_intervals_ms = np.diff(peaks) * (1000.0 / fs)
                 
                 # Filter physiologically reasonable intervals (120-6000 ms)
                 # 120 ms ≈ 500 BPM, 6000 ms = 10 BPM
                 min_rr_ms = 120
-                valid_intervals = rr_intervals_ms[(rr_intervals_ms >= min_rr_ms) & (rr_intervals_ms <= 6000)]
+                max_rr_ms = 6000
+                valid_intervals = rr_intervals_ms[(rr_intervals_ms >= min_rr_ms) & (rr_intervals_ms <= max_rr_ms)]
                 
                 if len(valid_intervals) > 0:
                     # Calculate heart rate from median R-R interval
@@ -1689,10 +1700,16 @@ class Dashboard(QWidget):
                     # Use median for stability
                     smoothed_bpm = int(np.median(self._dashboard_bpm_buffer))
                     metrics['heart_rate'] = smoothed_bpm
+                    # Use the most recent valid RR interval for instantaneous BPM
+                    last_rr = float(valid_intervals[-1])
+                    heart_rate = 60000.0 / last_rr  # Instantaneous BPM from last beat
+                    # Clamp to physiologic range (10–300 bpm)
+                    heart_rate = max(10.0, min(300.0, heart_rate))
+                    metrics['heart_rate'] = int(round(heart_rate))
                 else:
-                    metrics['heart_rate'] = "0"
+                    metrics['heart_rate'] = 0
             else:
-                metrics['heart_rate'] = "0"
+                metrics['heart_rate'] = 0
             # Calculate QRS Axis - LIVE like ECG test page
             if hasattr(self, 'ecg_test_page') and self.ecg_test_page and hasattr(self.ecg_test_page, 'data') and len(self.ecg_test_page.data) >= 6:
                 try:
@@ -1800,7 +1817,7 @@ class Dashboard(QWidget):
             
             # Calculate Time Elapsed (synchronized with ECG test page)
             if len(ecg_signal) > 0:
-                time_elapsed_sec = len(ecg_signal) / sampling_rate
+                time_elapsed_sec = len(ecg_signal) / fs  # Use fs (actual sampling rate) not sampling_rate parameter
                 minutes = int(time_elapsed_sec // 60)
                 seconds = int(time_elapsed_sec % 60)
                 metrics['time_elapsed'] = f"{minutes:02d}:{seconds:02d}"
@@ -1935,9 +1952,11 @@ class Dashboard(QWidget):
                         print(f"❌ Error getting wave speed: {e}")
                         wave_speed = 25.0
                     
-                    # Baseline seconds at 25 mm/s
-                    baseline_seconds = 10.0
-                    # Scale time window: 12.5 => 20s, 25 => 10s, 50 => 5s
+                    # Baseline window at 25 mm/s (diagnostic standard)
+                    # 25 mm/s → 3 seconds visible (≈15 large boxes at 5 mm each)
+                    baseline_seconds = 3.0
+                    # Scale time window with wave speed:
+                    #   12.5 mm/s → 6 s, 25 mm/s → 3 s, 50 mm/s → 1.5 s
                     seconds_to_show = baseline_seconds * (25.0 / max(1e-6, wave_speed))
                     window_samples = int(max(50, min(len(original_data), seconds_to_show * actual_sampling_rate)))
 

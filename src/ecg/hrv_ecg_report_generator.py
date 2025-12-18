@@ -2749,8 +2749,11 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     print(f"🔬 Report Generator - Received RV5/SV1 from data:")
     print(f"   rv5: {rv5_amp}, sv1: {sv1_amp}")
     
-    # If missing/zero, compute from V5 and V1 of last 10 seconds
-    if (rv5_amp<=0 or sv1_amp<=0) and ecg_test_page is not None and hasattr(ecg_test_page,'data'):
+    # If missing/zero, compute from V5 and V1 of last 10 seconds (GE/Hospital Standard)
+    # CRITICAL: Use RAW ECG data, not display-filtered signals
+    # Measurements must be from median beat, relative to TP baseline (isoelectric segment before P-wave)
+    # NOTE: sv1_amp can be negative (SV1 is negative by definition), so check for == 0.0, not <= 0
+    if (rv5_amp<=0 or sv1_amp==0.0) and ecg_test_page is not None and hasattr(ecg_test_page,'data'):
         try:
             from scipy.signal import butter, filtfilt, find_peaks
             fs = 250.0
@@ -2758,58 +2761,117 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 fs = float(ecg_test_page.sampler.sampling_rate)
             def _get_last(arr):
                 return arr[-int(10*fs):] if arr is not None and len(arr)>int(10*fs) else arr
-            # V5 index 10, V1 index 6
-            v5 = _get_last(ecg_test_page.data[10]) if len(ecg_test_page.data)>10 else None
-            v1 = _get_last(ecg_test_page.data[6]) if len(ecg_test_page.data)>6 else None
-            if v5 is not None and len(v5)>int(2*fs):
+            # V5 index 10, V1 index 6 - Get RAW data
+            v5_raw = _get_last(ecg_test_page.data[10]) if len(ecg_test_page.data)>10 else None
+            v1_raw = _get_last(ecg_test_page.data[6]) if len(ecg_test_page.data)>6 else None
+            
+            if v5_raw is not None and len(v5_raw)>int(2*fs):
+                # Apply filter ONLY for R-peak detection (0.5-40 Hz)
+                # Use RAW data for amplitude measurements
                 nyq = fs/2.0
                 b,a = butter(2, [max(0.5/nyq, 0.001), min(40.0/nyq,0.99)], btype='band')
-                v5f = filtfilt(b,a, np.asarray(v5))
+                v5f = filtfilt(b,a, np.asarray(v5_raw))
                 env = np.convolve(np.square(np.diff(v5f)), np.ones(int(0.15*fs))/(0.15*fs), mode='same')
                 r,_ = find_peaks(env, height=np.mean(env)+0.5*np.std(env), distance=int(0.6*fs))
                 vals=[]
                 for rr in r[1:-1]:
-                    qs = max(0, rr-int(0.08*fs)); qe = min(len(v5f), rr+int(0.08*fs))
-                    base = np.mean(v5f[max(0,qs-int(0.05*fs)):qs])
-                    vals.append(np.max(v5f[qs:qe])-base)
-                if len(vals)>0 and rv5_amp<=0: rv5_amp = float(np.median(vals))
-            if v1 is not None and len(v1)>int(2*fs):
+                    # QRS window: ±80ms around R-peak
+                    qs = max(0, rr-int(0.08*fs))
+                    qe = min(len(v5_raw), rr+int(0.08*fs))
+                    if qe > qs:
+                        # Use RAW data for amplitude measurement
+                        qrs_segment = np.asarray(v5_raw[qs:qe])
+                        
+                        # TP baseline: isoelectric segment before P-wave onset (150-350ms before R)
+                        tp_start = max(0, rr-int(0.35*fs))
+                        tp_end = max(0, rr-int(0.15*fs))
+                        if tp_end > tp_start:
+                            tp_segment = np.asarray(v5_raw[tp_start:tp_end])
+                            tp_baseline = np.median(tp_segment)  # Median for robustness
+                        else:
+                            # Fallback: short segment before QRS
+                            tp_baseline = np.median(np.asarray(v5_raw[max(0,qs-int(0.05*fs)):qs]))
+                        
+                        # RV5 = max(QRS) - TP_baseline (positive, in mV)
+                        # Convert from ADC counts to mV: V5 uses 7586 multiplier, 10mm/mV → 1 mV = 1517.2 ADC
+                        r_amp_adc = np.max(qrs_segment) - tp_baseline
+                        if r_amp_adc > 0:
+                            r_amp_mv = r_amp_adc / 1517.2  # Convert ADC to mV
+                            vals.append(r_amp_mv)
+                if len(vals)>0 and rv5_amp<=0: 
+                    rv5_amp = float(np.median(vals))  # Median beat approach
+                    
+            if v1_raw is not None and len(v1_raw)>int(2*fs):
+                # Apply filter ONLY for R-peak detection (0.5-40 Hz)
+                # Use RAW data for amplitude measurements
                 nyq = fs/2.0
                 b,a = butter(2, [max(0.5/nyq, 0.001), min(40.0/nyq,0.99)], btype='band')
-                v1f = filtfilt(b,a, np.asarray(v1))
+                v1f = filtfilt(b,a, np.asarray(v1_raw))
                 env = np.convolve(np.square(np.diff(v1f)), np.ones(int(0.15*fs))/(0.15*fs), mode='same')
                 r,_ = find_peaks(env, height=np.mean(env)+0.5*np.std(env), distance=int(0.6*fs))
                 vals=[]
                 for rr in r[1:-1]:
-                    ss = rr; se = min(len(v1f), rr+int(0.08*fs))
-                    base = np.mean(v1f[max(0,ss-int(0.05*fs)):ss])
-                    vals.append(base-np.min(v1f[ss:se]))
-                if len(vals)>0 and sv1_amp<=0: sv1_amp = float(np.median(vals))
+                    # QRS window: ±80ms around R-peak
+                    ss = rr
+                    se = min(len(v1_raw), rr+int(0.08*fs))
+                    if se > ss:
+                        # Use RAW data for amplitude measurement
+                        qrs_segment = np.asarray(v1_raw[ss:se])
+                        
+                        # TP baseline: isoelectric segment before P-wave onset (150-350ms before R)
+                        tp_start = max(0, rr-int(0.35*fs))
+                        tp_end = max(0, rr-int(0.15*fs))
+                        if tp_end > tp_start:
+                            tp_segment = np.asarray(v1_raw[tp_start:tp_end])
+                            tp_baseline = np.median(tp_segment)  # Median for robustness
+                        else:
+                            # Fallback: short segment before QRS
+                            tp_baseline = np.median(np.asarray(v1_raw[max(0, ss-int(0.05*fs)):ss]))
+                        
+                        # SV1 = min(QRS) - TP_baseline (negative, preserve sign, in mV)
+                        # Convert from ADC counts to mV: V1 uses 5500 multiplier, 10mm/mV → 1 mV = 1100 ADC
+                        s_amp_adc = np.min(qrs_segment) - tp_baseline
+                        if s_amp_adc < 0:  # SV1 must be negative
+                            s_amp_mv = s_amp_adc / 1100.0  # Convert ADC to mV (preserve sign)
+                            vals.append(s_amp_mv)
+                if len(vals)>0 and sv1_amp==0.0:
+                    sv1_amp = float(np.median(vals))  # Median beat approach, negative value
             print(f"🔁 Fallback computed RV5/SV1: RV5={rv5_amp:.4f}, SV1={sv1_amp:.4f}")
         except Exception as e:
             print(f"⚠️ Fallback RV5/SV1 computation failed: {e}")
 
-    # Convert to mV for display (values assumed to be in microvolt-like units; normalize)
-    rv5_mv = rv5_amp / 1000 if rv5_amp > 0 else 1.260  # fallback
-    sv1_mv = sv1_amp / 1000 if sv1_amp > 0 else 0.786  # fallback
+    # Unit conversion: GE/Hospital Standard - Values must be in mV
+    # CRITICAL: calculate_wave_amplitudes() now returns values in mV (converted from ADC counts)
+    # No additional conversion needed - use values directly
+    # GE Standard ranges: RV5 typically 0.5-3.0 mV, SV1 typically -0.5 to -2.0 mV
+    rv5_mv = rv5_amp if rv5_amp > 0 else 0.0
+    sv1_mv = sv1_amp if sv1_amp != 0.0 else 0.0  # SV1 is negative (preserved from calculation)
     
     print(f"   Converted to mV: RV5={rv5_mv:.3f}, SV1={sv1_mv:.3f}")
     
     # SECOND COLUMN - RV5/SV1 (ABOVE ECG GRAPH - shifted further up)
-    rv5_sv_label = String(240, 720, f"RV5/SV1  : {rv5_mv:.3f}/{sv1_mv:.3f}",  # Moved up from 680 to 690
+    # Display SV1 as negative mV (GE/Hospital standard)
+    rv5_sv_label = String(240, 720, f"RV5/SV1  : {rv5_mv:.3f} mV/{sv1_mv:.3f} mV",  # SV1 will show as negative
                           fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv_label)
-
-    # Calculate RV5+SV1 sum
-    rv5_sv1_sum = rv5_mv + sv1_mv
+    
+    # Calculate RV5+SV1 = RV5 + abs(SV1) (GE/Philips standard)
+    # SV1 is negative, so RV5+SV1 = RV5 + abs(SV1) for Sokolow-Lyon index
+    rv5_sv1_sum = rv5_mv + abs(sv1_mv)  # RV5 + abs(SV1) as per GE/Philips standard
     
     # SECOND COLUMN - RV5+SV1 (ABOVE ECG GRAPH - shifted further up)
-    rv5_sv1_sum_label = String(240, 700, f"RV5+SV1 : {rv5_sv1_sum:.3f}",  # Moved up from 660 to 670
+    rv5_sv1_sum_label = String(240, 700, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV",  # Moved up from 660 to 670
                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv1_sum_label)
 
     # SECOND COLUMN - QTCF (ABOVE ECG GRAPH - shifted further up)
-    qtcf_label = String(240, 682, "QTCF       : 0.049",  # Moved up from 642 to 652----ł
+    # Calculate QTcF using Fridericia formula: QTcF = QT / RR^(1/3)
+    qtcf_val = _safe_float(data.get("QTc_Fridericia") or data.get("QTcF_ms") or data.get("QTcF"), None)
+    if qtcf_val and qtcf_val > 0:
+        qtcf_text = f"QTCF       : {qtcf_val:.0f} ms"
+    else:
+        qtcf_text = "QTCF       : --"
+    qtcf_label = String(240, 682, qtcf_text,  # Moved up from 642 to 652
                         fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtcf_label)
 
@@ -3134,7 +3196,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
                 "P_QRS_T_mm": [p_mm, qrs_mm, t_mm],
                 "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)],
-                "QTCF": 0.049,
+                "QTCF": round(qtcf_val, 1) if 'qtcf_val' in locals() and qtcf_val and qtcf_val > 0 else None,
             }
         }
 
@@ -3170,7 +3232,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
             "RR_ms": RR,
             "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
             "P_QRS_T_mm": [p_mm, qrs_mm, t_mm],
-            "QTCF": 0.049,
+            "QTCF": None,  # Removed hardcoded constant - must be calculated from QT and RR
             "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)]
         }
 

@@ -511,12 +511,12 @@ class DemoManager:
                                             if (hasattr(self.ecg_test_page, 'data') and 
                                                 lead_index < len(self.ecg_test_page.data) and
                                                 len(self.ecg_test_page.data[lead_index]) > 0):
-                                                # Apply baseline centering using captured baseline
-                                                baseline = self._baseline_means.get(lead_index, 0.0)
-                                                centered_value = float(value) - baseline
+                                                # 🫀 CLINICAL: Store RAW value in data buffer (for clinical analysis)
+                                                # Do NOT apply baseline centering here - that's display-only
+                                                raw_value = float(value)
                                                 self.ecg_test_page.data[lead_index] = np.roll(
                                                     self.ecg_test_page.data[lead_index], -1)
-                                                self.ecg_test_page.data[lead_index][-1] = centered_value
+                                                self.ecg_test_page.data[lead_index][-1] = raw_value
                                             else:
                                                 print(f"❌ Invalid data buffer for lead {lead_index}")
                                                 
@@ -693,10 +693,9 @@ class DemoManager:
                 if data_slice.size == 0:
                     continue
         
+                # Baseline correction handled by low-frequency anchor in update_plots()
+                # No per-window centering needed here
                 centered_slice = np.array(data_slice, dtype=float)
-                slice_center = np.nanmedian(centered_slice)
-                if np.isfinite(slice_center):
-                    centered_slice = centered_slice - slice_center
         
                 finite_mask = np.isfinite(centered_slice)
                 if not np.any(finite_mask):

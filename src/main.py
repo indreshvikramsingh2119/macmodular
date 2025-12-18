@@ -59,6 +59,7 @@ try:
     from auth.sign_in import SignIn
     from auth.sign_out import SignOut
     from dashboard.dashboard import Dashboard
+    from splash_screen import SplashScreen
     logger.info(SUCCESS_MESSAGES["modules_loaded"])
 except ImportError as e:
     logger.error(ERROR_MESSAGES["import_error"].format(e))
@@ -605,44 +606,16 @@ def main():
         
         app = QApplication(sys.argv)
         app.setApplicationName("ECG Monitor")
-        app.setApplicationVersion("1.3")
+        app.setApplicationVersion("1.3")    
         
-        # Performance optimizations for faster, more responsive UI
-        app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)  # Better rendering on high-DPI displays
-        app.setAttribute(Qt.AA_EnableHighDpiScaling, True)  # Auto-scaling for different screen sizes
+        # Show splash screen
+        splash = SplashScreen()
+        splash.show()
+        app.processEvents()
         
-        # Apply global stylesheet for cross-platform consistency
-        app.setStyleSheet("""
-            /* Global Button Styles - Cross-platform consistent (macOS & Windows) */
-            QPushButton {
-                background: #ff6600;
-                color: white;
-                border: none;
-                border-radius: 16px;
-                padding: 8px 24px;
-                font-size: 14px;
-                font-weight: bold;
-                min-height: 36px;
-            }
-            QPushButton:hover {
-                background: #ff8800;
-            }
-            QPushButton:pressed {
-                background: #e55a00;
-            }
-            QPushButton:disabled {
-                background: #cccccc;
-                color: #666666;
-            }
-            
-            /* Ensure consistent rendering across platforms */
-            QWidget {
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
-            }
-        """)
-        
-        # Initialize login dialog (splash screen removed for faster startup)
+        # Initialize login dialog
         login = LoginRegisterDialog()
+        splash.finish(login)
         
         # Main application loop
         while True:

@@ -83,16 +83,20 @@ def _build_conservative_conclusions(metrics, settings_manager=None, sampling_rat
     if qtc_frid is not None:
         qtc_sec = qtc_frid / 1000.0
         if qtc_line == "QTc: not available":
-            qtc_line = f"QTcF (Fridericia): {qtc_frid:.0f} ms ({qtc_sec:.3f} s)"
+            qtc_line = f"QTcF (Fridericia): {qtc_frid:.0f} ms ({qtc_sec:.3f} s)"  # GE/Philips/BPL: ms and seconds
         else:
-            qtc_line += f"; QTcF (Fridericia): {qtc_frid:.0f} ms ({qtc_sec:.3f} s)"
+            qtc_line += f"; QTcF (Fridericia): {qtc_frid:.0f} ms ({qtc_sec:.3f} s)"  # GE/Philips/BPL: ms and seconds
 
     # LVH (Sokolow-Lyon) – use abs(SV1) internally, keep signed SV1 for reporting
+    # CRITICAL: RV5 and SV1 from metrics are in mV
+    # Sokolow-Lyon criteria: RV5 + |SV1| >= 3.5 mV (35 mm on ECG paper) indicates possible LVH
     lvh_line = None
     if rv5 is not None and sv1 is not None:
-        total = rv5_sv1 if rv5_sv1 is not None else (rv5 + abs(sv1))
-        if total is not None and total >= 35:
-            lvh_line = f"Possible LVH (Sokolow-Lyon RV5+SV1 = {total:.1f} mm)"
+        # Use abs(SV1) only for Sokolow-Lyon sum calculation (SV1 itself remains negative for reporting)
+        total_mv = rv5_sv1 if rv5_sv1 is not None else (rv5 + abs(sv1))
+        if total_mv is not None and total_mv >= 3.5:  # 3.5 mV threshold (35 mm on ECG paper)
+            total_mm = total_mv * 10.0  # Convert to mm for display (1 mV = 10 mm)
+            lvh_line = f"Possible LVH (Sokolow-Lyon RV5+SV1 = {total_mm:.1f} mm)"
 
     # ST deviation (conservative)
     st_line = "ST deviation: not assessed"
@@ -629,13 +633,21 @@ def capture_real_ecg_graphs_from_dashboard(dashboard_instance=None, ecg_test_pag
 
 def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, height=45, wave_gain_mm_mv=10.0):
     """
-    Create ECG drawing using ReportLab with REAL ECG data showing MAXIMUM heartbeats
-    Returns: ReportLab Drawing with guaranteed pink background and REAL ECG waveform
+    Create ECG drawing using ReportLab with REAL ECG data (GE/Philips fixed diagnostic scale).
+    
+    Fixed diagnostic scale requirements:
+    - Speed = 25 mm/s (no autoscale)
+    - Gain = 10 mm/mV (no autoscale)
+    - Grid: Minor 0.04s/0.1mV, Major 0.20s/1.0mV
+    - Doctor must be able to count squares
     
     Parameters:
-        wave_gain_mm_mv: Wave gain in mm/mV (default: 10.0 mm/mV)
-                         Used for amplitude scaling: 10mm/mV = 1.0x, 20mm/mV = 2.0x, 5mm/mV = 0.5x
+        wave_gain_mm_mv: Wave gain in mm/mV (MUST be 10.0 for diagnostic reports)
     """
+    # VALIDATION: Ensure fixed diagnostic scale
+    assert abs(wave_gain_mm_mv - 10.0) < 0.1, \
+        f"❌ Report must use fixed gain 10 mm/mV, got {wave_gain_mm_mv} mm/mV"
+    
     drawing = Drawing(width, height)
     
     # STEP 1: Create solid pink background rectangle
@@ -643,41 +655,57 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
     bg_rect = Rect(0, 0, width, height, fillColor=bg_color, strokeColor=None)
     drawing.add(bg_rect)
     
-    # STEP 2: Draw pink ECG grid lines (even lighter colors)
+    # STEP 2: Draw pink ECG grid lines (GE/Philips fixed diagnostic scale)
+    # Fixed diagnostic grid requirements:
+    # Minor: 0.04s / 0.1mV
+    # Major: 0.20s / 1.0mV
+    # At 25 mm/s: 0.04s = 1mm, 0.20s = 5mm
+    # At 10 mm/mV: 0.1mV = 1mm, 1.0mV = 10mm
     light_grid_color = colors.HexColor("#ffd1d1")  # Darker minor grid
     major_grid_color = colors.HexColor("#ffb3b3")   # Darker major grid
     
-    # Minor grid lines (1mm spacing equivalent)
-    minor_spacing_x = width / 60  # 60 divisions across width
-    minor_spacing_y = height / 20  # 20 divisions across height
+    from reportlab.lib.units import mm
     
-    # Vertical minor grid lines
-    for i in range(61):
-        x_pos = i * minor_spacing_x
-        line = Line(x_pos, 0, x_pos, height, strokeColor=light_grid_color, strokeWidth=0.4)
-        drawing.add(line)
+    # Minor grid: 1mm spacing (0.04s / 0.1mV)
+    minor_spacing_mm = 1.0 * mm
+    minor_spacing_x_points = minor_spacing_mm
+    minor_spacing_y_points = minor_spacing_mm
     
-    # Horizontal minor grid lines
-    for i in range(21):
-        y_pos = i * minor_spacing_y
-        line = Line(0, y_pos, width, y_pos, strokeColor=light_grid_color, strokeWidth=0.4)
-        drawing.add(line)
+    # Vertical minor lines (every 0.04s = 1mm at 25 mm/s)
+    num_minor_x = int(width / minor_spacing_x_points) + 1
+    for i in range(num_minor_x):
+        x_pos = i * minor_spacing_x_points
+        if x_pos <= width:
+            line = Line(x_pos, 0, x_pos, height, strokeColor=light_grid_color, strokeWidth=0.4)
+            drawing.add(line)
     
-    # Major grid lines (5mm spacing equivalent)
-    major_spacing_x = width / 12  # 12 divisions across width
-    major_spacing_y = height / 4   # 4 divisions across height
+    # Horizontal minor lines (every 0.1mV = 1mm at 10 mm/mV)
+    num_minor_y = int(height / minor_spacing_y_points) + 1
+    for i in range(num_minor_y):
+        y_pos = i * minor_spacing_y_points
+        if y_pos <= height:
+            line = Line(0, y_pos, width, y_pos, strokeColor=light_grid_color, strokeWidth=0.4)
+            drawing.add(line)
     
-    # Vertical major grid lines
-    for i in range(13):
-        x_pos = i * major_spacing_x
-        line = Line(x_pos, 0, x_pos, height, strokeColor=major_grid_color, strokeWidth=0.8)
-        drawing.add(line)
+    # Major grid: 5mm horizontal (0.20s), 10mm vertical (1.0mV)
+    major_spacing_x_mm = 5.0 * mm  # 0.20s at 25 mm/s
+    major_spacing_y_mm = 10.0 * mm  # 1.0mV at 10 mm/mV
     
-    # Horizontal major grid lines
-    for i in range(5):
-        y_pos = i * major_spacing_y
-        line = Line(0, y_pos, width, y_pos, strokeColor=major_grid_color, strokeWidth=0.8)
-        drawing.add(line)
+    # Vertical major lines (every 0.20s = 5mm)
+    num_major_x = int(width / major_spacing_x_mm) + 1
+    for i in range(num_major_x):
+        x_pos = i * major_spacing_x_mm
+        if x_pos <= width:
+            line = Line(x_pos, 0, x_pos, height, strokeColor=major_grid_color, strokeWidth=0.8)
+            drawing.add(line)
+    
+    # Horizontal major lines (every 1.0mV = 10mm)
+    num_major_y = int(height / major_spacing_y_mm) + 1
+    for i in range(num_major_y):
+        y_pos = i * major_spacing_y_mm
+        if y_pos <= height:
+            line = Line(0, y_pos, width, y_pos, strokeColor=major_grid_color, strokeWidth=0.8)
+            drawing.add(line)
     
     # STEP 3: Plot ECG in fixed diagnostic scale (25 mm/s, 10 mm/mV) with no autoscale
     if ecg_data is None or len(ecg_data) == 0:
@@ -3108,7 +3136,8 @@ def generate_ecg_report(
     # If missing/zero, compute from V5 and V1 of last 10 seconds (GE/Hospital Standard)
     # CRITICAL: Use RAW ECG data, not display-filtered signals
     # Measurements must be from median beat, relative to TP baseline (isoelectric segment before P-wave)
-    if (rv5_amp<=0 or sv1_amp<=0) and ecg_test_page is not None and hasattr(ecg_test_page,'data'):
+    # NOTE: sv1_amp can be negative (SV1 is negative by definition), so check for == 0.0, not <= 0
+    if (rv5_amp<=0 or sv1_amp==0.0) and ecg_test_page is not None and hasattr(ecg_test_page,'data'):
         try:
             from scipy.signal import butter, filtfilt, find_peaks
             fs = 250.0
@@ -3209,10 +3238,10 @@ def generate_ecg_report(
     rv5_sv_label = String(240, 720, f"RV5/SV1  : {rv5_mv:.3f} mV/{sv1_mv:.3f} mV",  # SV1 will show as negative
                           fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv_label)
-    
-    # Calculate RV5+SV1 algebraic sum (SV1 is negative, so sum = RV5 + SV1)
-    # For Sokolow-Lyon LVH criteria, use RV5 + |SV1| internally (see line 93)
-    rv5_sv1_sum = rv5_mv + sv1_mv  # Algebraic sum (SV1 negative)
+
+    # Calculate RV5+SV1 = RV5 + abs(SV1) (GE/Philips standard)
+    # SV1 is negative, so RV5+SV1 = RV5 + abs(SV1) for Sokolow-Lyon index
+    rv5_sv1_sum = rv5_mv + abs(sv1_mv)  # RV5 + abs(SV1) as per GE/Philips standard
     
     # SECOND COLUMN - RV5+SV1 (ABOVE ECG GRAPH - shifted further up)
     rv5_sv1_sum_label = String(240, 700, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV",  # Moved up from 660 to 670
@@ -3222,8 +3251,7 @@ def generate_ecg_report(
     # SECOND COLUMN - QTCF (ABOVE ECG GRAPH - shifted further up)
     qtcf_val = _safe_float(data.get("QTc_Fridericia") or data.get("QTcF_ms") or data.get("QTcF"), None)
     if qtcf_val and qtcf_val > 0:
-        qtcf_sec = qtcf_val / 1000.0
-        qtcf_text = f"QTCF       : {qtcf_val:.0f} ms ({qtcf_sec:.3f} s)"
+        qtcf_text = f"QTCF       : {qtcf_val:.0f} ms"
     else:
         qtcf_text = "QTCF       : --"
     qtcf_label = String(240, 682, qtcf_text,  # Moved up from 642 to 652
@@ -3584,7 +3612,7 @@ def generate_ecg_report(
             "RR_ms": RR,
             "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
             "P_QRS_T_mm": [p_mm, qrs_mm, t_mm],
-            "QTCF": 0.049,
+            "QTCF": round(qtcf_val, 1) if 'qtcf_val' in locals() and qtcf_val and qtcf_val > 0 else None,
             "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)]
         }
 
