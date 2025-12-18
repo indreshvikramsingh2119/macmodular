@@ -2055,148 +2055,55 @@ class ECGTestPage(QWidget):
         self.update_ecg_metrics_display(heart_rate, pr_interval, qrs_duration, qrs_axis, st_segment, qt_interval, qtc_interval)
 
     def calculate_heart_rate(self, lead_data):
-        """Calculate heart rate from Lead II data using R-R intervals
+        """Calculate heart rate from Lead II data using R-R intervals (GE/Philips standard).
         
-        ⚠️ CLINICAL ANALYSIS: Must receive RAW clinical data, NOT display-processed data.
-        This function is called with self.data[1] which contains raw ECG values.
+        Method: 60000 / median(RR intervals) over 10 seconds.
         """
         try:
-            # Early exit: if no real signal, report 0 instead of fallback
-            try:
-                arr = np.asarray(lead_data, dtype=float)
-                if len(arr) < 200 or np.all(arr == 0) or np.std(arr) < 0.1:
-                    return 0
-            except Exception:
+            # Ensure raw data
+            lead_data = np.asarray(lead_data, dtype=float)
+            if len(lead_data) < 200 or np.std(lead_data) < 0.1:
                 return 0
 
-            # Validate input data
-            if not isinstance(lead_data, (list, np.ndarray)) or len(lead_data) < 200:
-                print("❌ Insufficient data for heart rate calculation")
-                return 60  # Default fallback
+            fs = 500  # Default sampling rate
+            if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
+                fs = float(self.sampler.sampling_rate)
 
-            # Convert to numpy array for processing
-            try:
-                lead_data = np.asarray(lead_data, dtype=float)
-            except Exception as e:
-                print(f"❌ Error converting lead data to array: {e}")
-                return 60
+            # Filter for peak detection ONLY
+            from scipy.signal import butter, filtfilt
+            nyquist = fs / 2
+            b, a = butter(4, [0.5/nyquist, 40/nyquist], btype='band')
+            filtered = filtfilt(b, a, lead_data)
 
-            # Check for invalid values
-            if np.any(np.isnan(lead_data)) or np.any(np.isinf(lead_data)):
-                print("❌ Invalid values (NaN/Inf) in lead data")
-                return 60
+            # Find R-peaks
+            signal_std = np.std(filtered)
+            peaks, _ = find_peaks(
+                filtered, 
+                height=np.mean(filtered) + 0.5 * signal_std,
+                distance=int(0.2 * fs), # Max 300 BPM
+                prominence=signal_std * 0.4
+            )
 
-            # Use measured sampling rate if available; default to 250 Hz
-            fs = 250
-            try:
-                if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
-                    fs = float(self.sampler.sampling_rate)
-                    if fs <= 0 or fs > 1000:  # Sanity check
-                        fs = 250
-            except Exception as e:
-                print(f"❌ Error getting sampling rate: {e}")
-                fs = 250
+            if len(peaks) < 2:
+                return 0
 
-            # Apply bandpass filter to enhance R-peaks (0.5-40 Hz)
-            try:
-                from scipy.signal import butter, filtfilt
-                nyquist = fs / 2
-                low = max(0.001, 0.5 / nyquist)
-                high = min(0.999, 40 / nyquist)
-                if low >= high:
-                    print("❌ Invalid filter parameters")
-                    return 60
-                b, a = butter(4, [low, high], btype='band')
-                filtered_signal = filtfilt(b, a, lead_data)
-                if np.any(np.isnan(filtered_signal)) or np.any(np.isinf(filtered_signal)):
-                    print("❌ Filter produced invalid values")
-                    return 60
-            except Exception as e:
-                print(f"❌ Error in signal filtering: {e}")
-                return 60
+            # Calculate RR intervals in ms
+            rr_intervals = np.diff(peaks) * (1000.0 / fs)
+            
+            # Filter physiologically plausible RR (200ms to 2000ms = 300 to 30 BPM)
+            valid_rr = rr_intervals[(rr_intervals >= 200) & (rr_intervals <= 2000)]
+            
+            if len(valid_rr) == 0:
+                return 0
 
-            # Find R-peaks using scipy with robust parameters
-            try:
-                from scipy.signal import find_peaks
-                signal_mean = np.mean(filtered_signal)
-                signal_std = np.std(filtered_signal)
-                if signal_std == 0:
-                    print("❌ No signal variation detected")
-                    return 60
-                
-                # SMART ADAPTIVE PEAK DETECTION (10-300 BPM with BPM-based selection)
-                # Run multiple detections and choose based on CALCULATED BPM
-                height_threshold = signal_mean + 0.5 * signal_std
-                prominence_threshold = signal_std * 0.4
-                
-                # Run 3 detection strategies
-                detection_results = []
-                
-                # Strategy 1: Conservative (best for 10-120 BPM)
-                peaks_conservative, _ = find_peaks(
-                    filtered_signal,
-                    height=height_threshold,
-                    distance=int(0.5 * fs),  # 400ms - wider distance for low BPM
-                    prominence=prominence_threshold
-                )
-                if len(peaks_conservative) >= 2:
-                    rr_cons = np.diff(peaks_conservative) * (1000 / fs)
-                    # Accept RR intervals from 200–6000 ms (300–10 BPM)
-                    valid_cons = rr_cons[(rr_cons >= 200) & (rr_cons <= 6000)]
-                    if len(valid_cons) > 0:
-                        bpm_cons = 60000 / np.median(valid_cons)
-                        std_cons = np.std(valid_cons)
-                        detection_results.append(('conservative', peaks_conservative, bpm_cons, std_cons))
-                
-                # Strategy 2: Normal (best for 100-180 BPM)
-                peaks_normal, _ = find_peaks(
-                    filtered_signal,
-                    height=height_threshold,
-                    distance=int(0.3 * fs),  # 240ms - medium distance
-                    prominence=prominence_threshold
-                )
-                if len(peaks_normal) >= 2:
-                    rr_norm = np.diff(peaks_normal) * (1000 / fs)
-                    # Accept RR intervals from 200–6000 ms (300–10 BPM)
-                    valid_norm = rr_norm[(rr_norm >= 200) & (rr_norm <= 6000)]
-                    if len(valid_norm) > 0:
-                        bpm_norm = 60000 / np.median(valid_norm)
-                        std_norm = np.std(valid_norm)
-                        detection_results.append(('normal', peaks_normal, bpm_norm, std_norm))
-                
-                # Strategy 3: Tight (best for 160-300 BPM)
-                peaks_tight, _ = find_peaks(
-                    filtered_signal,
-                    height=height_threshold,
-                    distance=int(0.2 * fs),  # 160ms - tight distance for high BPM
-                    prominence=prominence_threshold
-                )
-                if len(peaks_tight) >= 2:
-                    rr_tight = np.diff(peaks_tight) * (1000 / fs)
-                    # Accept RR intervals from 200–6000 ms (300–10 BPM)
-                    valid_tight = rr_tight[(rr_tight >= 200) & (rr_tight <= 6000)]
-                    if len(valid_tight) > 0:
-                        bpm_tight = 60000 / np.median(valid_tight)
-                        std_tight = np.std(valid_tight)
-                        detection_results.append(('tight', peaks_tight, bpm_tight, std_tight))
-                
-                # Select based on BPM consistency (lowest std deviation = most stable)
-                if detection_results:
-                    # Sort by consistency (lower std = better)
-                    detection_results.sort(key=lambda x: x[3])  # Sort by std
-                    best_method, peaks, best_bpm, best_std = detection_results[0]
-                    # print(f"🎯 Selected {best_method}: {best_bpm:.1f} BPM (std={best_std:.1f})")
-                else:
-                    # Fallback
-                    peaks, _ = find_peaks(
-                        filtered_signal,
-                        height=height_threshold,
-                        distance=int(0.4 * fs),
-                        prominence=prominence_threshold
-                    )
-            except Exception as e:
-                print(f"❌ Error in peak detection: {e}")
-                return 60
+            # GE/Philips Standard: Use median RR for HR
+            median_rr = np.median(valid_rr)
+            hr = int(round(60000.0 / median_rr))
+            
+            return hr
+        except Exception as e:
+            print(f"❌ Error calculating heart rate: {e}")
+            return 0
 
             if len(peaks) < 2:
                 print(f"❌ Insufficient peaks detected: {len(peaks)}")
@@ -2971,196 +2878,257 @@ class ECGTestPage(QWidget):
         """Calculate QRS axis from median beat vectors (GE/Philips standard)."""
         try:
             if len(self.data) < 6:
-                return 0
-            fs = 80.0
+                return getattr(self, '_prev_qrs_axis', 0) or 0
+            
+            fs = 500.0
             if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
                 fs = float(self.sampler.sampling_rate)
-            lead_i_raw = self.data[0]
-            lead_avf_raw = self.data[5]
-            lead_ii = self.data[1]
+            
+            lead_i_raw = np.asarray(self.data[0], dtype=float)
+            lead_ii = np.asarray(self.data[1], dtype=float)
+            lead_avf_raw = np.asarray(self.data[5], dtype=float)
+            
+            # 1. R-peak detection on Lead II (Baseline for all alignment)
             from scipy.signal import butter, filtfilt
             nyquist = fs / 2
-            low = 0.5 / nyquist
-            high = 40 / nyquist
-            b, a = butter(4, [low, high], btype='band')
+            b, a = butter(4, [0.5/nyquist, 40/nyquist], btype='band')
             filtered_ii = filtfilt(b, a, lead_ii)
+            
             signal_mean = np.mean(filtered_ii)
             signal_std = np.std(filtered_ii)
-            r_peaks, _ = find_peaks(filtered_ii, height=signal_mean + 0.5 * signal_std, distance=int(0.3 * fs), prominence=signal_std * 0.4)
-            if len(r_peaks) < 8: # Enforce 8 beats
+            r_peaks, _ = find_peaks(
+                filtered_ii, 
+                height=signal_mean + 0.5 * signal_std, 
+                distance=int(0.25 * fs), 
+                prominence=signal_std * 0.4
+            )
+            
+            if len(r_peaks) < 8:
                 return getattr(self, '_prev_qrs_axis', 0) or 0
+            
+            # 2. Build Median Beats for I, II, aVF (8-12 clean beats)
             _, median_i = build_median_beat(lead_i_raw, r_peaks, fs, min_beats=8)
-            _, median_avf = build_median_beat(lead_avf_raw, r_peaks, fs, min_beats=8)
-            if median_i is None or median_avf is None:
-                return getattr(self, '_prev_qrs_axis', 0) or 0
-            r_peak_idx = len(median_i) // 2
-            # Get Lead II median beat for axis calculation
             _, median_ii = build_median_beat(lead_ii, r_peaks, fs, min_beats=8)
-            if median_ii is None:
+            _, median_avf = build_median_beat(lead_avf_raw, r_peaks, fs, min_beats=8)
+            
+            if median_i is None or median_ii is None or median_avf is None:
                 return getattr(self, '_prev_qrs_axis', 0) or 0
-            # Get TP baselines for Lead I and aVF (REQUIRED for correct axis calculation)
+                
+            r_peak_idx = len(median_i) // 2
+            
+            # 3. Time axis and TP baseline
+            time_axis_i, _ = build_median_beat(lead_i_raw, r_peaks, fs, min_beats=8)
             r_mid = r_peaks[len(r_peaks) // 2]
             prev_r_idx = r_peaks[len(r_peaks) // 2 - 1] if len(r_peaks) > 1 else None
             tp_baseline_i = get_tp_baseline(lead_i_raw, r_mid, fs, prev_r_peak_idx=prev_r_idx)
             tp_baseline_avf = get_tp_baseline(lead_avf_raw, r_mid, fs, prev_r_peak_idx=prev_r_idx)
             
-            # Build time axis for median beat
-            time_axis_i, _ = build_median_beat(lead_i_raw, r_peaks, fs, min_beats=8)
-            if time_axis_i is None:
-                return getattr(self, '_prev_qrs_axis', 0) or 0
+            # 4. Axis Calculation (Integral Area Method)
+            axis_deg = calculate_axis_from_median_beat(
+                lead_i_raw, lead_ii, lead_avf_raw, 
+                median_i, median_ii, median_avf, 
+                r_peak_idx, fs, 
+                tp_baseline_i=tp_baseline_i, 
+                tp_baseline_avf=tp_baseline_avf, 
+                time_axis=time_axis_i, 
+                wave_type='QRS', 
+                prev_axis=getattr(self, '_prev_qrs_axis', None)
+            )
             
-            # Calculate QRS axis using strict wave windows and net area (integral)
-            axis_deg = calculate_axis_from_median_beat(lead_i_raw, lead_ii, lead_avf_raw, median_i, median_ii, median_avf, r_peak_idx, fs, tp_baseline_i=tp_baseline_i, tp_baseline_avf=tp_baseline_avf, time_axis=time_axis_i, wave_type='QRS', prev_axis=self._prev_qrs_axis)
             self._prev_qrs_axis = axis_deg
             return int(round(axis_deg))
         except Exception as e:
-            print(f"❌ Error calculating QRS axis from median: {e}")
+            print(f"❌ Error calculating QRS axis: {e}")
             return 0
-    
+
     def calculate_p_axis_from_median(self):
-        """Calculate P-wave axis from median beat using P-wave only (GE/Philips standard)."""
+        """Calculate P-wave axis from median beat vectors (GE/Philips standard)."""
         try:
             if len(self.data) < 6:
-                return 0
+                return getattr(self, '_prev_p_axis', 0) or 0
             
-            fs = 80.0
+            fs = 500.0
             if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
                 fs = float(self.sampler.sampling_rate)
             
-            lead_i_raw = self.data[0]
-            lead_avf_raw = self.data[5]
-            lead_ii = self.data[1]
+            lead_i_raw = np.asarray(self.data[0], dtype=float)
+            lead_ii = np.asarray(self.data[1], dtype=float)
+            lead_avf_raw = np.asarray(self.data[5], dtype=float)
             
-            # Detect R-peaks in Lead II for alignment
+            # 1. R-peak detection on Lead II (Same as QRS for alignment consistency)
             from scipy.signal import butter, filtfilt
             nyquist = fs / 2
-            low = 0.5 / nyquist
-            high = 40 / nyquist
-            b, a = butter(4, [low, high], btype='band')
+            b, a = butter(4, [0.5/nyquist, 40/nyquist], btype='band')
             filtered_ii = filtfilt(b, a, lead_ii)
+            
             signal_mean = np.mean(filtered_ii)
             signal_std = np.std(filtered_ii)
-            r_peaks, _ = find_peaks(filtered_ii, height=signal_mean + 0.5 * signal_std, distance=int(0.3 * fs), prominence=signal_std * 0.4)
+            r_peaks, _ = find_peaks(
+                filtered_ii, 
+                height=signal_mean + 0.5 * signal_std, 
+                distance=int(0.25 * fs), 
+                prominence=signal_std * 0.4
+            )
             
-            if len(r_peaks) < 8: # Enforce 8 beats
+            if len(r_peaks) < 8:
                 return getattr(self, '_prev_p_axis', 0) or 0
             
-            # Build median beats for Lead I and aVF
+            # 2. Build Median Beats
             _, median_i = build_median_beat(lead_i_raw, r_peaks, fs, min_beats=8)
-            _, median_avf = build_median_beat(lead_avf_raw, r_peaks, fs, min_beats=8)
-            if median_i is None or median_avf is None:
-                return getattr(self, '_prev_p_axis', 0) or 0
-            
-            # Get Lead II median beat for axis calculation validation
             _, median_ii = build_median_beat(lead_ii, r_peaks, fs, min_beats=8)
-            if median_ii is None:
+            _, median_avf = build_median_beat(lead_avf_raw, r_peaks, fs, min_beats=8)
+            
+            if median_i is None or median_ii is None or median_avf is None:
                 return getattr(self, '_prev_p_axis', 0) or 0
+                
+            r_peak_idx = len(median_i) // 2
             
-            r_peak_idx = len(median_i) // 2  # R-peak at center
-            
-            # Get TP baselines for Lead I and aVF (REQUIRED for correct axis calculation)
+            # 3. TP Baselines and PR (for window shrinking)
             r_mid = r_peaks[len(r_peaks) // 2]
             prev_r_idx = r_peaks[len(r_peaks) // 2 - 1] if len(r_peaks) > 1 else None
             tp_baseline_i = get_tp_baseline(lead_i_raw, r_mid, fs, prev_r_peak_idx=prev_r_idx)
             tp_baseline_avf = get_tp_baseline(lead_avf_raw, r_mid, fs, prev_r_peak_idx=prev_r_idx)
             
-            # Build time axis for median beat
             time_axis_i, _ = build_median_beat(lead_i_raw, r_peaks, fs, min_beats=8)
-            if time_axis_i is None:
-                return getattr(self, '_prev_p_axis', 0) or 0
+            pr_ms = getattr(self, 'pr_interval', 160)
             
-            # Calculate P axis using strict wave windows and net area (integral)
-            p_axis_deg = calculate_axis_from_median_beat(lead_i_raw, lead_ii, lead_avf_raw, median_i, median_ii, median_avf, r_peak_idx, fs, tp_baseline_i=tp_baseline_i, tp_baseline_avf=tp_baseline_avf, time_axis=time_axis_i, wave_type='P', prev_axis=self._prev_p_axis)
+            # 4. Axis Calculation (Integral Area Method)
+            axis_deg = calculate_axis_from_median_beat(
+                lead_i_raw, lead_ii, lead_avf_raw, 
+                median_i, median_ii, median_avf, 
+                r_peak_idx, fs, 
+                tp_baseline_i=tp_baseline_i, 
+                tp_baseline_avf=tp_baseline_avf, 
+                time_axis=time_axis_i, 
+                wave_type='P', 
+                prev_axis=getattr(self, '_prev_p_axis', None),
+                pr_ms=pr_ms
+            )
             
-            # Update previous value for next calculation
-            self._prev_p_axis = p_axis_deg
-            
-            return int(round(p_axis_deg))
+            self._prev_p_axis = axis_deg
+            return int(round(axis_deg))
         except Exception as e:
-            print(f"❌ Error calculating P axis from median: {e}")
+            print(f"❌ Error calculating P axis: {e}")
             return 0
-    
+
     def calculate_t_axis_from_median(self):
         """Calculate T-wave axis from median beat vectors (GE/Philips standard)."""
         try:
             if len(self.data) < 6:
-                return 0
-            fs = 80.0
+                return getattr(self, '_prev_t_axis', 0) or 0
+            
+            fs = 500.0
             if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
                 fs = float(self.sampler.sampling_rate)
-            lead_i_raw = self.data[0]
-            lead_avf_raw = self.data[5]
-            lead_ii = self.data[1]
+            
+            lead_i_raw = np.asarray(self.data[0], dtype=float)
+            lead_ii = np.asarray(self.data[1], dtype=float)
+            lead_avf_raw = np.asarray(self.data[5], dtype=float)
+            
+            # 1. R-peak detection on Lead II
             from scipy.signal import butter, filtfilt
             nyquist = fs / 2
-            low = 0.5 / nyquist
-            high = 40 / nyquist
-            b, a = butter(4, [low, high], btype='band')
+            b, a = butter(4, [0.5/nyquist, 40/nyquist], btype='band')
             filtered_ii = filtfilt(b, a, lead_ii)
+            
             signal_mean = np.mean(filtered_ii)
             signal_std = np.std(filtered_ii)
-            r_peaks, _ = find_peaks(filtered_ii, height=signal_mean + 0.5 * signal_std, distance=int(0.3 * fs), prominence=signal_std * 0.4)
-            if len(r_peaks) < 8: # Enforce 8 beats
+            r_peaks, _ = find_peaks(
+                filtered_ii, 
+                height=signal_mean + 0.5 * signal_std, 
+                distance=int(0.25 * fs), 
+                prominence=signal_std * 0.4
+            )
+            
+            if len(r_peaks) < 8:
                 return getattr(self, '_prev_t_axis', 0) or 0
+            
+            # 2. Build Median Beats
             _, median_i = build_median_beat(lead_i_raw, r_peaks, fs, min_beats=8)
-            _, median_avf = build_median_beat(lead_avf_raw, r_peaks, fs, min_beats=8)
-            if median_i is None or median_avf is None:
-                return getattr(self, '_prev_t_axis', 0) or 0
-            r_peak_idx = len(median_i) // 2
-            # Get Lead II median beat for axis calculation
             _, median_ii = build_median_beat(lead_ii, r_peaks, fs, min_beats=8)
-            if median_ii is None:
+            _, median_avf = build_median_beat(lead_avf_raw, r_peaks, fs, min_beats=8)
+            
+            if median_i is None or median_ii is None or median_avf is None:
                 return getattr(self, '_prev_t_axis', 0) or 0
-            # Get TP baselines for Lead I and aVF (REQUIRED for correct axis calculation)
+                
+            r_peak_idx = len(median_i) // 2
+            
+            # 3. TP Baselines
             r_mid = r_peaks[len(r_peaks) // 2]
             prev_r_idx = r_peaks[len(r_peaks) // 2 - 1] if len(r_peaks) > 1 else None
             tp_baseline_i = get_tp_baseline(lead_i_raw, r_mid, fs, prev_r_peak_idx=prev_r_idx)
             tp_baseline_avf = get_tp_baseline(lead_avf_raw, r_mid, fs, prev_r_peak_idx=prev_r_idx)
             
-            # Build time axis for median beat
             time_axis_i, _ = build_median_beat(lead_i_raw, r_peaks, fs, min_beats=8)
-            if time_axis_i is None:
-                return getattr(self, '_prev_t_axis', 0) or 0
             
-            # Calculate T axis using strict wave windows and net area (integral)
-            axis_deg = calculate_axis_from_median_beat(lead_i_raw, lead_ii, lead_avf_raw, median_i, median_ii, median_avf, r_peak_idx, fs, tp_baseline_i=tp_baseline_i, tp_baseline_avf=tp_baseline_avf, time_axis=time_axis_i, wave_type='T', prev_axis=self._prev_t_axis)
+            # 4. Axis Calculation (Integral Area Method)
+            axis_deg = calculate_axis_from_median_beat(
+                lead_i_raw, lead_ii, lead_avf_raw, 
+                median_i, median_ii, median_avf, 
+                r_peak_idx, fs, 
+                tp_baseline_i=tp_baseline_i, 
+                tp_baseline_avf=tp_baseline_avf, 
+                time_axis=time_axis_i, 
+                wave_type='T', 
+                prev_axis=getattr(self, '_prev_t_axis', None)
+            )
+            
             self._prev_t_axis = axis_deg
             return int(round(axis_deg))
         except Exception as e:
-            print(f"❌ Error calculating T axis from median: {e}")
+            print(f"❌ Error calculating T axis: {e}")
             return 0
     
     def calculate_rv5_sv1_from_median(self):
-        """Calculate RV5 and SV1 from median beats (GE/Philips standard)."""
+        """Calculate RV5 and SV1 from median beats (GE/Philips standard).
+        
+        Logic:
+        - RV5: Max positive R in V5 QRS window relative to TP baseline.
+        - SV1: Most negative S nadir in V1 QRS window relative to TP baseline.
+        """
         try:
             if len(self.data) < 8:
                 return None, None
-            fs = 80.0
+            
+            fs = 500.0
             if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
                 fs = float(self.sampler.sampling_rate)
-            lead_v5_raw = self.data[6] if len(self.data) > 6 else None
-            lead_v1_raw = self.data[7] if len(self.data) > 7 else None
+                
+            lead_v5_raw = np.asarray(self.data[6], dtype=float) if len(self.data) > 6 else None
+            lead_v1_raw = np.asarray(self.data[7], dtype=float) if len(self.data) > 7 else None
+            lead_ii = np.asarray(self.data[1], dtype=float)
+            
             if lead_v5_raw is None or lead_v1_raw is None:
                 return None, None
-            lead_ii = self.data[1]
+            
+            # 1. Detect R-peaks on Lead II for alignment
             from scipy.signal import butter, filtfilt
             nyquist = fs / 2
-            low = 0.5 / nyquist
-            high = 40 / nyquist
-            b, a = butter(4, [low, high], btype='band')
+            b, a = butter(4, [0.5/nyquist, 40/nyquist], btype='band')
             filtered_ii = filtfilt(b, a, lead_ii)
+            
             signal_mean = np.mean(filtered_ii)
             signal_std = np.std(filtered_ii)
-            r_peaks, _ = find_peaks(filtered_ii, height=signal_mean + 0.5 * signal_std, distance=int(0.3 * fs), prominence=signal_std * 0.4)
-            if len(r_peaks) < 3:
+            r_peaks, _ = find_peaks(
+                filtered_ii, 
+                height=signal_mean + 0.5 * signal_std, 
+                distance=int(0.25 * fs), 
+                prominence=signal_std * 0.4
+            )
+            
+            if len(r_peaks) < 8:
                 return None, None
-            filtered_v5 = filtfilt(b, a, lead_v5_raw)
-            filtered_v1 = filtfilt(b, a, lead_v1_raw)
-            r_peaks_v5, _ = find_peaks(filtered_v5, height=np.mean(filtered_v5) + 0.5 * np.std(filtered_v5), distance=int(0.3 * fs), prominence=np.std(filtered_v5) * 0.4)
-            r_peaks_v1, _ = find_peaks(filtered_v1, height=np.mean(filtered_v1) + 0.5 * np.std(filtered_v1), distance=int(0.3 * fs), prominence=np.std(filtered_v1) * 0.4)
-            if len(r_peaks_v5) < 3 or len(r_peaks_v1) < 3:
-                return None, None
-            rv5_mv, sv1_mv = measure_rv5_sv1_from_median_beat(lead_v5_raw, lead_v1_raw, r_peaks_v5, r_peaks_v1, fs, v5_adc_per_mv=2048.0, v1_adc_per_mv=1441.0)
+                
+            # 2. Call measurement function using RAW data and shared R-peaks
+            # ADC factors for V5/V1 (Marquette standards)
+            rv5_mv, sv1_mv = measure_rv5_sv1_from_median_beat(
+                lead_v5_raw, lead_v1_raw, 
+                r_peaks, r_peaks, # Use shared R-peaks for alignment
+                fs, 
+                v5_adc_per_mv=2048.0, 
+                v1_adc_per_mv=1441.0
+            )
+            
             return rv5_mv, sv1_mv
         except Exception as e:
             print(f"❌ Error calculating RV5/SV1 from median: {e}")

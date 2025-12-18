@@ -424,7 +424,8 @@ def measure_st_deviation_from_median_beat(median_beat, time_axis, fs, tp_baselin
 
 
 def calculate_axis_from_median_beat(lead_i_raw, lead_ii_raw, lead_avf_raw, median_beat_i, median_beat_ii, median_beat_avf, 
-                                     r_peak_idx, fs, tp_baseline_i=None, tp_baseline_avf=None, time_axis=None, wave_type='QRS', prev_axis=None):
+                                     r_peak_idx, fs, tp_baseline_i=None, tp_baseline_avf=None, time_axis=None, 
+                                     wave_type='QRS', prev_axis=None, pr_ms=None, adc_i=1200.0, adc_avf=1200.0):
     """
     Calculate electrical axis from median beat using net area (integral) method (GE/Philips standard).
     
@@ -445,6 +446,9 @@ def calculate_axis_from_median_beat(lead_i_raw, lead_ii_raw, lead_avf_raw, media
         time_axis: Time axis in ms (centered at R-peak = 0 ms)
         wave_type: 'P', 'QRS', or 'T' for different wave axes
         prev_axis: Previous median axis for safety clamp (optional)
+        pr_ms: PR interval in ms (optional, used for P-wave window shrinking)
+        adc_i: ADC counts per mV for Lead I
+        adc_avf: ADC counts per mV for Lead aVF
     
     Returns:
         Axis in degrees (0° to 360°, GE Marquette standard)
@@ -478,6 +482,11 @@ def calculate_axis_from_median_beat(lead_i_raw, lead_ii_raw, lead_avf_raw, media
             wave_start = r_peak_idx - int(0.20 * fs)   # -200 ms
             wave_end   = r_peak_idx - int(0.14 * fs)   # -140 ms
 
+            # If PR < 120 ms -> shrink P window automatically to avoid QRS energy
+            if pr_ms is not None and pr_ms < 120:
+                # Move window further from R
+                wave_end = r_peak_idx - int(0.16 * fs) # -160 ms
+
             # Absolute safety guard
             wave_end = min(wave_end, r_peak_idx - int(0.14 * fs))
                 
@@ -504,8 +513,12 @@ def calculate_axis_from_median_beat(lead_i_raw, lead_ii_raw, lead_avf_raw, media
         wave_segment_avf = signal_avf[wave_start:wave_end]
         
         dt = 1.0 / fs
-        net_i = np.trapz(wave_segment_i, dx=dt)
-        net_avf = np.trapz(wave_segment_avf, dx=dt)
+        net_i_adc = np.trapz(wave_segment_i, dx=dt)
+        net_avf_adc = np.trapz(wave_segment_avf, dx=dt)
+        
+        # Convert to mV·s for clinical thresholding
+        net_i = net_i_adc / adc_i
+        net_avf = net_avf_adc / adc_avf
         
         # Safety clamp: if signal area is too small, return previous axis
         # GE/Philips standard: Higher noise floor for P-wave energy gate (4e-5 mV·s)
@@ -520,6 +533,10 @@ def calculate_axis_from_median_beat(lead_i_raw, lead_ii_raw, lead_avf_raw, media
         # Normalize to 0° to 360°
         if axis_deg < 0:
             axis_deg += 360
+            
+        # Marquette P-axis Clamping: Clamp final display to 0-90° if requested
+        if wave_type == 'P':
+            axis_deg = np.clip(axis_deg, 0, 90)
             
         return axis_deg
     except Exception as e:

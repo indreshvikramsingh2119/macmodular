@@ -39,7 +39,10 @@ This document details the exact clinical calculation logic used in the applicati
 
 ### QT Interval (ms)
 - **Method**: QRS onset to T-wave offset on the median beat.
-- **Boundary Discipline**: T-offset is detected where the signal either crosses the TP baseline or the energy drops to the noise floor (0.5 * threshold).
+- **Boundary Discipline**: T-offset detection stops when:
+  1. The signal crosses the TP baseline (isoelectric line).
+  2. The energy drops below the noise floor (0.5 * threshold).
+- **Units**: Internal calculations in seconds; reported in milliseconds.
 - **Formula**: `QT = T_offset_ms - QRS_onset_ms`
 
 ### QTc (Bazett's Formula)
@@ -65,7 +68,9 @@ Instead of simple peak amplitudes, the axis is calculated using the **Net Area (
 4.  **Normalization**: `Axis_Deg = (Axis_Rad * 180 / π)` normalized to 0–360°.
 
 ### Fixed Wave Windows (Relative to R-peak)
-- **P-Axis**: `[-200 ms, -140 ms]` (Strict window to avoid QRS energy).
+- **P-Axis**: `[-200 ms, -140 ms]` (Strict window).
+  - *Dynamic Shrinkage*: If **PR < 120 ms**, the window automatically shrinks to end at **-160 ms** to prevent QRS contamination.
+  - *Marquette Clamping*: Final display clamped to **0–90°**.
 - **QRS-Axis**: `[-50 ms, +80 ms]`
 - **T-Axis**: `[+120 ms, +500 ms]`
 
