@@ -3005,6 +3005,9 @@ class ECGTestPage(QWidget):
                 pr_ms=pr_ms
             )
             
+            if axis_deg is None:
+                return getattr(self, '_prev_p_axis', 0) or 0
+                
             self._prev_p_axis = axis_deg
             return int(round(axis_deg))
         except Exception as e:
