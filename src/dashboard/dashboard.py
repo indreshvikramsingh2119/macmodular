@@ -1680,6 +1680,26 @@ class Dashboard(QWidget):
                 valid_intervals = rr_intervals_ms[(rr_intervals_ms >= min_rr_ms) & (rr_intervals_ms <= max_rr_ms)]
                 
                 if len(valid_intervals) > 0:
+                    # Calculate heart rate from median R-R interval
+                    median_rr = np.median(valid_intervals)
+                    heart_rate = 60000 / median_rr  # Convert to BPM
+                    
+                    # Ensure reasonable range (10-300 BPM)
+                    heart_rate = max(10, min(300, heart_rate))
+                    hr_int = int(round(heart_rate))
+                    
+                    # ANTI-FLICKERING: Smooth over last 3 readings for faster response in EXE
+                    # Reduced from 5 to 3 for quicker BPM control (5-7 sec target)
+                    if not hasattr(self, '_dashboard_bpm_buffer'):
+                        self._dashboard_bpm_buffer = []
+                    
+                    self._dashboard_bpm_buffer.append(hr_int)
+                    if len(self._dashboard_bpm_buffer) > 3:
+                        self._dashboard_bpm_buffer.pop(0)
+                    
+                    # Use median for stability
+                    smoothed_bpm = int(np.median(self._dashboard_bpm_buffer))
+                    metrics['heart_rate'] = smoothed_bpm
                     # Use the most recent valid RR interval for instantaneous BPM
                     last_rr = float(valid_intervals[-1])
                     heart_rate = 60000.0 / last_rr  # Instantaneous BPM from last beat

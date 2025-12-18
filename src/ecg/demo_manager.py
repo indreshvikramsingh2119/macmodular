@@ -177,6 +177,21 @@ class DemoManager:
             # Start demo data generation in the existing 12-lead grid
             self.start_demo_data()
             
+            # Start elapsed timer for demo mode (sync with demo start time)
+            try:
+                if hasattr(self.ecg_test_page, 'elapsed_timer') and self.ecg_test_page.elapsed_timer:
+                    # Set start_time if not already set
+                    if not hasattr(self.ecg_test_page, 'start_time') or self.ecg_test_page.start_time is None:
+                        self.ecg_test_page.start_time = time.time()
+                        self.ecg_test_page.paused_duration = 0
+                    # Start elapsed timer - ensure it's stopped first to avoid duplicates
+                    if self.ecg_test_page.elapsed_timer.isActive():
+                        self.ecg_test_page.elapsed_timer.stop()
+                    self.ecg_test_page.elapsed_timer.start(1000)  # Update every 1 second
+                    print("⏱️ Elapsed timer started for demo mode")
+            except Exception as e:
+                print(f"⚠️ Could not start elapsed timer for demo: {e}")
+            
             # Start the dashboard timer when demo begins (after start_demo_data sets _demo_started_at)
             try:
                 if hasattr(self.ecg_test_page, 'parent') and hasattr(self.ecg_test_page.parent, 'start_acquisition_timer'):
@@ -225,6 +240,16 @@ class DemoManager:
             
             # Stop demo data generation
             self.stop_demo_data()
+            
+            # Stop elapsed timer when demo stops
+            try:
+                if hasattr(self.ecg_test_page, 'elapsed_timer') and self.ecg_test_page.elapsed_timer:
+                    if self.ecg_test_page.elapsed_timer.isActive():
+                        self.ecg_test_page.elapsed_timer.stop()
+                        print("⏸️ Elapsed timer stopped (demo mode OFF)")
+            except Exception as e:
+                print(f"⚠️ Could not stop elapsed timer: {e}")
+            
             self._enable_hardware_controls()
             self._demo_lead_ranges.clear()
     
@@ -553,10 +578,12 @@ class DemoManager:
             self.demo_timer.timeout.connect(self.update_demo_plots)
             
             # Adjust timer interval based on wave speed
-            # Target 30-40 FPS on Windows for stability
-            base_interval = 40  # base interval milliseconds
+            # Use faster timer interval for EXE builds to prevent gaps
+            # Timer interval is more important than timer type for smooth plotting
+            base_interval = 33  # ~30 FPS for smoother plotting in EXE
             speed_factor = max(0.5, getattr(self, 'time_window', 10.0) / 10.0)
-            timer_interval = max(25, int(base_interval * speed_factor))
+            timer_interval = max(20, int(base_interval * speed_factor))
+            # Using default timer type - works fine in EXE with proper interval
             self.demo_timer.start(timer_interval)
             
             print(f"🚀 Demo mode started with wave speed: {self.current_wave_speed}mm/s")

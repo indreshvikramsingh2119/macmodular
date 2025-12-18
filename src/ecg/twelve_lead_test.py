@@ -3652,13 +3652,27 @@ class ECGTestPage(QWidget):
             return
         
         if self.start_time and 'time_elapsed' in self.metric_labels:
-            current_time = time.time()
-            # Subtract paused duration from elapsed time
-            paused_duration = getattr(self, 'paused_duration', 0)
-            elapsed = current_time - self.start_time - paused_duration
-            minutes = int(elapsed // 60)
-            seconds = int(elapsed % 60)
-            self.metric_labels['time_elapsed'].setText(f"{minutes:02d}:{seconds:02d}")
+            try:
+                current_time = time.time()
+                # Subtract paused duration from elapsed time
+                paused_duration = getattr(self, 'paused_duration', 0)
+                elapsed = max(0, current_time - self.start_time - paused_duration)  # Ensure non-negative
+                
+                # Calculate minutes and seconds
+                minutes = int(elapsed // 60)
+                seconds = int(elapsed % 60)
+                
+                # Store last displayed time to prevent skipping
+                if not hasattr(self, '_last_displayed_elapsed'):
+                    self._last_displayed_elapsed = -1
+                
+                # Only update if time actually changed (prevent duplicate updates)
+                current_elapsed_int = int(elapsed)
+                if current_elapsed_int != self._last_displayed_elapsed:
+                    self.metric_labels['time_elapsed'].setText(f"{minutes:02d}:{seconds:02d}")
+                    self._last_displayed_elapsed = current_elapsed_int
+            except Exception as e:
+                print(f"❌ Error updating elapsed time: {e}")
 
     def reset_metrics_to_zero(self):
         """Reset all ECG metric labels to zero/initial state."""
@@ -5043,8 +5057,12 @@ class ECGTestPage(QWidget):
                 else:
                     raise e
             
-            print(f"[DEBUG] ECGTestPage - Starting timer with 50ms interval")
-            self.timer.start(50)
+            # Use faster timer interval for EXE builds to prevent gaps
+            # Timer interval is more important than timer type for smooth plotting
+            timer_interval = 33  # ~30 FPS for smoother plotting in EXE
+            print(f"[DEBUG] ECGTestPage - Starting timer with {timer_interval}ms interval")
+            # Using default timer type - works fine in EXE with proper interval
+            self.timer.start(timer_interval)
             if hasattr(self, '_12to1_timer'):
                 self._12to1_timer.start(100)
             print(f"[DEBUG] ECGTestPage - Timer started, serial reader created")
@@ -5075,7 +5093,10 @@ class ECGTestPage(QWidget):
                     self.paused_at = None  # Clear pause timestamp
                 else:
                     print("⏱️ Session timer resumed")
-            self.elapsed_timer.start(1000)
+            # Ensure timer is stopped before starting to avoid multiple timers
+            if self.elapsed_timer.isActive():
+                self.elapsed_timer.stop()
+            self.elapsed_timer.start(1000)  # Update every 1 second
             
         except Exception as e:
             error_msg = f"Failed to connect to any serial port: {str(e)}"
@@ -7249,8 +7270,9 @@ class ECGTestPage(QWidget):
                     except Exception as e:
                         print(f"❌ Error updating plot {i}: {e}")
                         continue
-                # Calculate ECG metrics every 5 updates for good responsiveness
-                if self.update_count % 5 == 0:
+                # Calculate ECG metrics more frequently for faster BPM updates in EXE
+                # Reduced from every 5 updates to every 3 updates for better responsiveness
+                if self.update_count % 3 == 0:
                     try:
                         self.calculate_ecg_metrics()
                     except Exception as e:
