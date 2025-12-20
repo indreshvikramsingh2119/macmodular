@@ -1173,14 +1173,44 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     
     # Create table with 3 columns: Interval Names, Observed Values, Standard Range
     obs_headers = ["Interval Names", "Observed Values", "Standard Range"]
+    
+    def _fmt_ms(value):
+        try:
+            vf = float(value)
+            if vf and vf > 0:
+                return f"{vf:.0f} ms"
+        except Exception:
+            pass
+        return "--"
+
+    def _fmt_qtcf(value):
+        try:
+            vf = float(value)
+            if vf and vf > 0:
+                sec = vf / 1000.0
+                return f"{sec:.3f} s"
+        except Exception:
+            pass
+        return "--"
+
+    def _fmt_st(value):
+        try:
+            vf = float(value)
+            if vf is not None:
+                return f"{int(round(vf))}"
+        except Exception:
+            pass
+        return "--"
+
     obs_data = [
         ["Heart Rate", f"{data['beat']} bpm", "60-100"],                    
-        ["PR Interval", f"{data['PR']} ms", "120 ms - 200 ms"],            
-        ["QRS Complex", f"{data['QRS']} ms", "70 ms - 120 ms"],            
+        ["PR Interval", _fmt_ms(data.get('PR')), "120 ms - 200 ms"],            
+        ["QRS Complex", _fmt_ms(data.get('QRS')), "70 ms - 120 ms"],            
         ["QRS Axis", f"{data.get('QRS_axis', '--')}°", "Normal"],         
-        ["QT Interval", f"{data['QT']} ms", "300 ms - 450 ms"],            
-        ["QTC Interval", f"{data['QTc']} ms", "300 ms - 450 ms"],          
-        ["ST Interval", f"{data['ST']} ms", "80 ms - 120 ms"],            
+        ["QT Interval", _fmt_ms(data.get('QT')), "300 ms - 450 ms"],            
+        ["QTCB (Bazett)", _fmt_ms(data.get('QTc')), "300 ms - 450 ms"],          
+        ["QTCF (Fridericia)", _fmt_qtcf(data.get('QTc_Fridericia')), "300 ms - 450 ms"],          
+        ["ST Interval", _fmt_st(data.get('ST')), "Normal"],            
     ]
     
     # Add headers to data
@@ -1322,17 +1352,18 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     QRS = data.get('QRS', 93)
     QT = data.get('QT', 354)
     QTc = data.get('QTc', 260)
+    QTcF = data.get('QTc_Fridericia') or data.get('QTcF') or 0
     ST = data.get('ST', 114)
     # DYNAMIC RR interval calculation from heart rate (instead of hard-coded 857)
     RR = int(60000 / HR) if HR and HR > 0 else 0  # RR interval in ms from heart rate
    
 
-    # Create table data: 2 rows × 2 columns (as per your changes)
+    # Create table data: 4 rows × 2 columns
     vital_table_data = [
-        [f"HR : {HR} bpm", f"QT: {QT} ms"],
-        [f"PR : {PR} ms", f"QTc: {QTc} ms"],
-        [f"QRS: {QRS} ms", f"ST: {ST} ms"],
-        [f"RR : {RR} ms", ""]  
+        [f"HR : {int(round(HR))} bpm", f"QT: {int(round(QT))} ms"],
+        [f"PR : {int(round(PR))} ms", f"QTc: {int(round(QTc))} ms"],
+        [f"QRS: {int(round(QRS))} ms", f"ST: {int(round(ST))} ms"],
+        [f"RR : {int(round(RR))} ms", f"QTcF: {QTcF/1000.0:.3f} s"]  
     ]
 
     # Create vital parameters table with MORE LEFT and TOP positioning
@@ -1818,17 +1849,18 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     QRS = data.get('QRS', 93)
     QT = data.get('QT', 354)
     QTc = data.get('QTc', 260)
+    QTcF = data.get('QTc_Fridericia') or data.get('QTcF') or 0
     ST = data.get('ST', 114)
     # DYNAMIC RR interval calculation from heart rate (instead of hard-coded 857)
     RR = int(60000 / HR) if HR and HR > 0 else 0  # RR interval in ms from heart rate
    
 
-    # Create table data: 2 rows × 2 columns (as per your changes)
+    # Create table data: 4 rows × 2 columns
     vital_table_data = [
-        [f"HR : {HR} bpm", f"QT: {QT} ms"],
-        [f"PR : {PR} ms", f"QTc: {QTc} ms"],
-        [f"QRS: {QRS} ms", f"ST: {ST} ms"],
-        [f"RR : {RR} ms", ""]  
+        [f"HR : {int(round(HR))} bpm", f"QT: {int(round(QT))} ms"],
+        [f"PR : {int(round(PR))} ms", f"QTc: {int(round(QTc))} ms"],
+        [f"QRS: {int(round(QRS))} ms", f"ST: {int(round(ST))} ms"],
+        [f"RR : {int(round(RR))} ms", f"QTcF: {QTcF/1000.0:.3f} s"]  
     ]
 
     # Create vital parameters table with MORE LEFT and TOP positioning
@@ -2325,16 +2357,16 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rr_label)
 
-    qt_label = String(130, 664, f"QT    : {QT} ms",  
+    qt_label = String(130, 664, f"QT    : {int(round(QT))} ms",  
                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qt_label)
 
-    qtc_label = String(130, 646, f"QTc  : {QTc} ms",  
+    qtc_label = String(130, 646, f"QTc  : {int(round(QTc))} ms",  
                       fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtc_label)
 
     # SECOND COLUMN (Right side - x=240)
-    st_label = String(240, 664, f"ST            : {ST} ms",  
+    st_label = String(240, 664, f"ST            : {int(round(ST))} ms",  
                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(st_label)
 
@@ -2482,9 +2514,15 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                                 return "--"
                             axis_rad = np.arctan2(mean_aVF, mean_I)
                             axis_deg = np.degrees(axis_rad)
-                            if axis_deg < 0:
+                            
+                            # Normalize to -180 to +180 (clinical standard, matches standardized function)
+                            # This ensures consistency with calculate_axis_from_median_beat()
+                            if axis_deg > 180:
+                                axis_deg -= 360
+                            if axis_deg < -180:
                                 axis_deg += 360
-                            return f"{int(axis_deg)}°"
+                            
+                            return f"{int(round(axis_deg))}°"
                         
                         # Detect P peaks (adaptive window based on HR)
                         # Calculate HR from R-peaks for adaptive detection
@@ -2851,15 +2889,18 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     
     # SECOND COLUMN - RV5/SV1 (ABOVE ECG GRAPH - shifted further up)
     # Display SV1 as negative mV (GE/Hospital standard)
+    # Use 3 decimal places for precision (not rounded to integers)
     rv5_sv_label = String(240, 720, f"RV5/SV1  : {rv5_mv:.3f} mV/{sv1_mv:.3f} mV",  # SV1 will show as negative
                           fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv_label)
 
     # Calculate RV5+SV1 = RV5 + abs(SV1) (GE/Philips standard)
+    # CRITICAL: Calculate from unrounded values to avoid rounding errors
     # SV1 is negative, so RV5+SV1 = RV5 + abs(SV1) for Sokolow-Lyon index
     rv5_sv1_sum = rv5_mv + abs(sv1_mv)  # RV5 + abs(SV1) as per GE/Philips standard
     
     # SECOND COLUMN - RV5+SV1 (ABOVE ECG GRAPH - shifted further up)
+    # Use 3 decimal places for precision
     rv5_sv1_sum_label = String(240, 700, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV",  # Moved up from 660 to 670
                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv1_sum_label)
@@ -3873,14 +3914,35 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", lead_ii_data=None, da
     page1_st = original_metrics_from_json.get("ST", 0) if original_metrics_from_json.get("ST", 0) != 0 else data.get('ST', 0)
     
     obs_headers = ["Interval Names", "Observed Values", "Standard Range"]
+    
+    def _fmt_ms(value):
+        try:
+            vf = float(value)
+            if vf and vf > 0:
+                return f"{vf:.0f} ms"
+        except Exception:
+            pass
+        return "--"
+
+    def _fmt_qtcf(value):
+        try:
+            vf = float(value)
+            if vf and vf > 0:
+                sec = vf / 1000.0
+                return f"{sec:.3f} s"
+        except Exception:
+            pass
+        return "--"
+
     obs_data = [
         ["Heart Rate", f"{page1_beat_hrv} bpm", "60-100"],  # HRV-specific average (same as Report Overview)
-        ["PR Interval", f"{page1_pr} ms", "120 ms - 200 ms"],  # metrics.json value
-        ["QRS Complex", f"{page1_qrs} ms", "70 ms - 120 ms"],  # metrics.json value
+        ["PR Interval", _fmt_ms(page1_pr), "120 ms - 200 ms"],  # metrics.json value
+        ["QRS Complex", _fmt_ms(page1_qrs), "70 ms - 120 ms"],  # metrics.json value
         ["QRS Axis", f"{data.get('QRS_axis', '--')}°", "Normal"],
-        ["QT Interval", f"{page1_qt} ms", "300 ms - 450 ms"],  # metrics.json value
-        ["QTC Interval", f"{page1_qtc} ms", "300 ms - 450 ms"],  # metrics.json value
-        ["ST Interval", f"{page1_st} ms", "80 ms - 120 ms"],  # metrics.json value
+        ["QT Interval", _fmt_ms(page1_qt), "300 ms - 450 ms"],  # metrics.json value
+        ["QTCB (Bazett)", _fmt_ms(page1_qtc), "300 ms - 450 ms"],  # metrics.json value
+        ["QTCF (Fridericia)", _fmt_qtcf(data.get('QTc_Fridericia') or data.get('QTcF')), "300 ms - 450 ms"],
+        ["ST Interval", _fmt_st(page1_st), "Normal"],  # metrics.json value
     ]
     
     obs_table_data = [obs_headers] + obs_data

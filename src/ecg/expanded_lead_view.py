@@ -954,7 +954,7 @@ class ExpandedLeadView(QDialog):
             valid_mask = ~np.isnan(scaled)
             if np.any(valid_mask):
                 if np.all(valid_mask):
-        self.ax.plot(time, scaled, color='#0984e3', linewidth=1.0, label='ECG Signal')
+                    self.ax.plot(time, scaled, color='#0984e3', linewidth=1.0, label='ECG Signal')
                 else:
                     # Plot only valid segments
                     time_valid = time[valid_mask]
@@ -1501,7 +1501,7 @@ class ExpandedLeadView(QDialog):
             self.ax.spines['right'].set_visible(False)
             # Set x-limits only if we have valid time data
             if len(time) > 0:
-            self.ax.set_xlim(time[0], time[-1])
+                self.ax.set_xlim(time[0], time[-1])
             else:
                 self.ax.set_xlim(0, 1)  # Fallback
             
@@ -1783,7 +1783,7 @@ class ExpandedLeadView(QDialog):
         """Analyze the ECG signal and update metrics"""
         if self.ecg_data.size == 0:
             if hasattr(self, 'arrhythmia_list'):
-            self.arrhythmia_list.setText("No data to analyze.")
+                self.arrhythmia_list.setText("No data to analyze.")
             return
         
         try:
@@ -1832,10 +1832,10 @@ class ExpandedLeadView(QDialog):
                 if len(analysis.get('r_peaks', [])) > 0:
                     # Check if method exists before calling
                     if hasattr(self.arrhythmia_detector, 'detect_arrhythmias_with_probabilities'):
-            heat_map_data = self.arrhythmia_detector.detect_arrhythmias_with_probabilities(
-                self.ecg_data, analysis['r_peaks'], window_size=2.0
-            )
-            self.prepare_heatmap_overlay(heat_map_data)
+                        heat_map_data = self.arrhythmia_detector.detect_arrhythmias_with_probabilities(
+                            self.ecg_data, analysis['r_peaks'], window_size=2.0
+                        )
+                        self.prepare_heatmap_overlay(heat_map_data)
                     else:
                         # Method doesn't exist, clear heatmap
                         self.heatmap_overlay = None

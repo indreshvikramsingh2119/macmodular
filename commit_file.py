@@ -57,8 +57,7 @@ from functools import partial # For plot clicking
 from .clinical_measurements import (
     build_median_beat, get_tp_baseline, measure_qt_from_median_beat,
     measure_rv5_sv1_from_median_beat, measure_st_deviation_from_median_beat,
-    calculate_axis_from_median_beat, measure_pr_from_median_beat,
-    measure_qrs_duration_from_median_beat
+    calculate_axis_from_median_beat
 )
 
 # --- Configuration ---
@@ -383,11 +382,6 @@ class SerialStreamReader:
                 exception=e,
                 category="SERIAL_ERROR"
             )
-            
-            # If device is disconnected (Errno 6) or too many consecutive errors, stop
-            if "Device not configured" in str(e) or "[Errno 6]" in str(e) or self.consecutive_errors > 20:
-                print("⏹️ Critical serial error - stopping acquisition")
-                self.running = False
             
         return out
 
@@ -1940,14 +1934,14 @@ class ECGTestPage(QWidget):
             return
         
         # Get sampling rate
-        fs = 186.5 # Default based on observed hardware behavior
-        if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate > 10:
+        fs = 80.0
+        if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
             fs = float(self.sampler.sampling_rate)
-        elif hasattr(self, 'sampling_rate') and self.sampling_rate > 10:
+        elif hasattr(self, 'sampling_rate') and self.sampling_rate:
             fs = float(self.sampling_rate)
         
         # Detect R-peaks in raw Lead II (fallback to V2 if Lead II insufficient) - GE/Philips standard
-        from scipy.signal import butter, filtfilt, find_peaks
+        from scipy.signal import butter, filtfilt
         nyquist = fs / 2
         low = 0.5 / nyquist
         high = 40 / nyquist
@@ -2006,48 +2000,32 @@ class ECGTestPage(QWidget):
         
         # Calculate Heart Rate: HR = 60000 / RR (GE/Philips standard)
         heart_rate = int(round(60000.0 / rr_ms)) if rr_ms > 0 else 60
-        self.last_heart_rate = heart_rate
         
-        # Calculate PR Interval from median beat (standardized function)
-        pr_interval = measure_pr_from_median_beat(median_beat_ii, time_axis, fs, tp_baseline_ii)
-        if pr_interval is None or pr_interval <= 0:
-            pr_interval = 0
+        # Calculate PR Interval from median beat
+        pr_interval = self.calculate_pr_interval_from_median(median_beat_ii, time_axis, fs, tp_baseline_ii)
         self.pr_interval = pr_interval
         
-        # Calculate QRS Complex duration from median beat (standardized function)
-        qrs_duration = measure_qrs_duration_from_median_beat(median_beat_ii, time_axis, fs, tp_baseline_ii)
-        if qrs_duration is None or qrs_duration <= 0:
-            qrs_duration = 0
-        self.last_qrs_duration = qrs_duration
+        # Calculate QRS Complex duration from median beat
+        qrs_duration = self.calculate_qrs_duration_from_median(median_beat_ii, time_axis, fs, tp_baseline_ii)
         
         # Calculate QT Interval from median beat (GE/Philips standard)
         qt_interval = measure_qt_from_median_beat(median_beat_ii, time_axis, fs, tp_baseline_ii)
         if qt_interval is None:
             qt_interval = 0
-        self.last_qt_interval = qt_interval
         
         # Calculate QTc (Bazett) and QTcF (Fridericia)
         qtc_interval = self.calculate_qtc_interval(heart_rate, qt_interval)
         qtcf_interval = self.calculate_qtcf_interval(qt_interval, rr_ms)
-        self.last_qtc_interval = qtc_interval
-        self.last_qtcf_interval = qtcf_interval
         
         # Calculate axes from median beats (P/QRS/T)
         qrs_axis = self.calculate_qrs_axis_from_median()
         p_axis = self.calculate_p_axis_from_median()
         t_axis = self.calculate_t_axis_from_median()
-        self.last_qrs_axis = qrs_axis
-        
-        # Calculate QRS-T angle (highly valuable clinical metric)
-        from .clinical_measurements import calculate_qrs_t_angle
-        qrs_t_angle = calculate_qrs_t_angle(qrs_axis, t_axis)
-        self.last_qrs_t_angle = qrs_t_angle
         
         # Calculate ST deviation from median beat (returns mV)
         st_segment = measure_st_deviation_from_median_beat(median_beat_ii, time_axis, fs, tp_baseline_ii, j_offset_ms=60)
         if st_segment is None:
             st_segment = 0.0
-        self.last_st_segment = st_segment
         
         # Calculate RV5/SV1 from median beats
         rv5_mv, sv1_mv = self.calculate_rv5_sv1_from_median()
@@ -2074,7 +2052,7 @@ class ECGTestPage(QWidget):
             print(f"⚠️ Clinical validation warning: {e}")
         
         # Update UI metrics (dashboard only shows: BPM, PR, QRS axis, ST, QT/QTc, timer)
-        self.update_ecg_metrics_display(heart_rate, pr_interval, qrs_duration, qrs_axis, st_segment, qt_interval, qtc_interval, qtcf_interval)
+        self.update_ecg_metrics_display(heart_rate, pr_interval, qrs_duration, qrs_axis, st_segment, qt_interval, qtc_interval)
 
     def calculate_heart_rate(self, lead_data):
         """Calculate heart rate from Lead II data using R-R intervals
@@ -2111,10 +2089,10 @@ class ECGTestPage(QWidget):
             # Use measured sampling rate if available; default to 250 Hz
             fs = 250
             try:
-                if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate > 10:
+                if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
                     fs = float(self.sampler.sampling_rate)
-                elif hasattr(self, 'sampling_rate') and self.sampling_rate > 10:
-                    fs = float(self.sampling_rate)
+                    if fs <= 0 or fs > 1000:  # Sanity check
+                        fs = 250
             except Exception as e:
                 print(f"❌ Error getting sampling rate: {e}")
                 fs = 250
@@ -2276,26 +2254,30 @@ class ECGTestPage(QWidget):
                 hr_int = int(round(heart_rate))
                 
                 # Initialize smoothing buffer
-                if not hasattr(self, '_hr_smooth_buffer'):
-                    self._hr_smooth_buffer = []
+                if not hasattr(self, '_bpm_smooth_buffer'):
+                    self._bpm_smooth_buffer = []
                 
-                self._hr_smooth_buffer.append(hr_int)
-                if len(self._hr_smooth_buffer) > 5:  # 5-reading smoothing
-                    self._hr_smooth_buffer.pop(0)
+                # Add current reading to buffer
+                self._bpm_smooth_buffer.append(hr_int)
                 
-                # Use median for smoothing to ignore outliers
-                smoothed_hr = int(round(np.median(self._hr_smooth_buffer)))
+                # Keep only last 5 readings for smoothing
+                if len(self._bpm_smooth_buffer) > 5:
+                    self._bpm_smooth_buffer.pop(0)
                 
-                # Final stability check: only change display if shift is ≥2 BPM (increased from 1 for better stability)
-                if not hasattr(self, '_last_stable_hr'):
-                    self._last_stable_hr = smoothed_hr
-                    
-                if abs(smoothed_hr - self._last_stable_hr) >= 2:
-                    self._last_stable_hr = smoothed_hr
+                # Return median of last 5 readings (very stable, no flickering)
+                smoothed_bpm = int(np.median(self._bpm_smooth_buffer))
                 
-                return self._last_stable_hr
+                # Only update if changed by >= 2 bpm (prevents minor fluctuations)
+                try:
+                    if self._last_hr_display is not None and abs(smoothed_bpm - self._last_hr_display) < 2:
+                        return self._last_hr_display
+                    self._last_hr_display = smoothed_bpm
+                except Exception:
+                    self._last_hr_display = smoothed_bpm
+                
+                return smoothed_bpm
             except Exception as e:
-                print(f"❌ Error calculating final BPM: {e}")
+                print(f"❌ Error in final heart rate calculation: {e}")
                 return 60
         except Exception as e:
             print(f"❌ Critical error in calculate_heart_rate: {e}")
@@ -2586,11 +2568,11 @@ class ECGTestPage(QWidget):
             
             # Apply bandpass filter to enhance R-peaks (0.5-40 Hz)
             from scipy.signal import butter, filtfilt, find_peaks
-            fs = 186.5
-            if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate > 10:
+            fs = 80.0  # match hardware default so windows scale correctly
+            if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
                 fs = float(self.sampler.sampling_rate)
-            elif hasattr(self, 'sampling_rate') and self.sampling_rate > 10:
-                fs = float(self.sampling_rate)
+                if fs <= 0:
+                    fs = 80.0
             
             nyquist = fs / 2
             low = 0.5 / nyquist
@@ -2655,7 +2637,7 @@ class ECGTestPage(QWidget):
             return 0  # Fallback to 0 when not computable
         except:
             return 0
-
+    
     def calculate_st_interval(self, lead_data):
         """Calculate ST segment elevation/depression at J+60ms - FRESH calculation"""
         try:
@@ -2718,13 +2700,8 @@ class ECGTestPage(QWidget):
                     if tp_baseline_end > tp_baseline_start:
                         tp_baseline = np.median(filtered_signal[tp_baseline_start:tp_baseline_end])
                     else:
-                        # Fallback: short segment before QRS
                         baseline_start = max(0, r_peak - int(0.15 * fs))
                         baseline_end = max(0, r_peak - int(0.05 * fs))
-                        if baseline_end > baseline_start:
-                            tp_baseline = np.median(filtered_signal[baseline_start:baseline_end])
-                        else:
-                            tp_baseline = np.median(filtered_signal[max(0, r_peak - int(0.05 * fs)):max(0, r_peak - int(0.01 * fs))])
                         tp_baseline = np.mean(filtered_signal[baseline_start:baseline_end]) if baseline_end > baseline_start else np.mean(filtered_signal)
                     
                     # ST deviation in mV (raw ADC difference, needs conversion)
@@ -2766,10 +2743,10 @@ class ECGTestPage(QWidget):
             
             # Get sampling rate
             from scipy.signal import butter, filtfilt, find_peaks
-            fs = 186.5
-            if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate > 10:
+            fs = 80
+            if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
                 fs = float(self.sampler.sampling_rate)
-            elif hasattr(self, 'sampling_rate') and self.sampling_rate > 10:
+            elif hasattr(self, 'sampling_rate') and self.sampling_rate:
                 fs = float(self.sampling_rate)
             
             # Filter signal
@@ -2873,7 +2850,7 @@ class ECGTestPage(QWidget):
             
         except Exception as e:
             return 0
-
+    
     def calculate_qtcf_interval(self, qt_ms, rr_ms):
         """Calculate QTcF using Fridericia formula: QTcF = QT / RR^(1/3)
         
@@ -2995,8 +2972,8 @@ class ECGTestPage(QWidget):
         try:
             if len(self.data) < 6:
                 return 0
-            fs = 186.5
-            if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate > 10:
+            fs = 80.0
+            if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
                 fs = float(self.sampler.sampling_rate)
             lead_i_raw = self.data[0]
             lead_avf_raw = self.data[5]
@@ -3039,214 +3016,164 @@ class ECGTestPage(QWidget):
         except Exception as e:
             print(f"❌ Error calculating QRS axis from median: {e}")
             return 0
-
+    
     def calculate_p_axis_from_median(self):
-        """Calculate P-wave axis from median beat vectors (GE/Philips standard)."""
+        """Calculate P-wave axis from median beat using P-wave only (GE/Philips standard)."""
         try:
             if len(self.data) < 6:
-                return getattr(self, '_prev_p_axis', 0) or 0
+                return 0
             
-            fs = 500.0
+            fs = 80.0
             if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
                 fs = float(self.sampler.sampling_rate)
             
-            lead_i_raw = np.asarray(self.data[0], dtype=float)
-            lead_ii = np.asarray(self.data[1], dtype=float)
-            lead_avf_raw = np.asarray(self.data[5], dtype=float)
+            lead_i_raw = self.data[0]
+            lead_avf_raw = self.data[5]
+            lead_ii = self.data[1]
             
-            # 1. R-peak detection on Lead II (Same as QRS for alignment consistency)
+            # Detect R-peaks in Lead II for alignment
             from scipy.signal import butter, filtfilt
             nyquist = fs / 2
-            b, a = butter(4, [0.5/nyquist, 40/nyquist], btype='band')
+            low = 0.5 / nyquist
+            high = 40 / nyquist
+            b, a = butter(4, [low, high], btype='band')
             filtered_ii = filtfilt(b, a, lead_ii)
-            
             signal_mean = np.mean(filtered_ii)
             signal_std = np.std(filtered_ii)
-            r_peaks, _ = find_peaks(
-                filtered_ii, 
-                height=signal_mean + 0.5 * signal_std, 
-                distance=int(0.25 * fs), 
-                prominence=signal_std * 0.4
-            )
+            r_peaks, _ = find_peaks(filtered_ii, height=signal_mean + 0.5 * signal_std, distance=int(0.3 * fs), prominence=signal_std * 0.4)
             
-            if len(r_peaks) < 8:
+            if len(r_peaks) < 8: # Enforce 8 beats
                 return getattr(self, '_prev_p_axis', 0) or 0
             
-            # 2. Build Median Beats
+            # Build median beats for Lead I and aVF
             _, median_i = build_median_beat(lead_i_raw, r_peaks, fs, min_beats=8)
-            _, median_ii = build_median_beat(lead_ii, r_peaks, fs, min_beats=8)
             _, median_avf = build_median_beat(lead_avf_raw, r_peaks, fs, min_beats=8)
-            
-            if median_i is None or median_ii is None or median_avf is None:
+            if median_i is None or median_avf is None:
                 return getattr(self, '_prev_p_axis', 0) or 0
-                
-            r_peak_idx = len(median_i) // 2
             
-            # 3. TP Baselines and PR (for window shrinking)
+            # Get Lead II median beat for axis calculation validation
+            _, median_ii = build_median_beat(lead_ii, r_peaks, fs, min_beats=8)
+            if median_ii is None:
+                return getattr(self, '_prev_p_axis', 0) or 0
+            
+            r_peak_idx = len(median_i) // 2  # R-peak at center
+            
+            # Get TP baselines for Lead I and aVF (REQUIRED for correct axis calculation)
             r_mid = r_peaks[len(r_peaks) // 2]
             prev_r_idx = r_peaks[len(r_peaks) // 2 - 1] if len(r_peaks) > 1 else None
             tp_baseline_i = get_tp_baseline(lead_i_raw, r_mid, fs, prev_r_peak_idx=prev_r_idx)
             tp_baseline_avf = get_tp_baseline(lead_avf_raw, r_mid, fs, prev_r_peak_idx=prev_r_idx)
             
+            # Build time axis for median beat
             time_axis_i, _ = build_median_beat(lead_i_raw, r_peaks, fs, min_beats=8)
-            pr_ms = getattr(self, 'pr_interval', 160)
-            
-            # 4. Axis Calculation (Integral Area Method)
-            axis_deg = calculate_axis_from_median_beat(
-                lead_i_raw, lead_ii, lead_avf_raw, 
-                median_i, median_ii, median_avf, 
-                r_peak_idx, fs, 
-                tp_baseline_i=tp_baseline_i, 
-                tp_baseline_avf=tp_baseline_avf, 
-                time_axis=time_axis_i, 
-                wave_type='P', 
-                prev_axis=getattr(self, '_prev_p_axis', None),
-                pr_ms=pr_ms
-            )
-            
-            if axis_deg is None:
+            if time_axis_i is None:
                 return getattr(self, '_prev_p_axis', 0) or 0
-                
-            self._prev_p_axis = axis_deg
-            return int(round(axis_deg))
+            
+            # Calculate P axis using strict wave windows and net area (integral)
+            p_axis_deg = calculate_axis_from_median_beat(lead_i_raw, lead_ii, lead_avf_raw, median_i, median_ii, median_avf, r_peak_idx, fs, tp_baseline_i=tp_baseline_i, tp_baseline_avf=tp_baseline_avf, time_axis=time_axis_i, wave_type='P', prev_axis=self._prev_p_axis)
+            
+            # Update previous value for next calculation
+            self._prev_p_axis = p_axis_deg
+            
+            return int(round(p_axis_deg))
         except Exception as e:
-            print(f"❌ Error calculating P axis: {e}")
+            print(f"❌ Error calculating P axis from median: {e}")
             return 0
-
+    
     def calculate_t_axis_from_median(self):
         """Calculate T-wave axis from median beat vectors (GE/Philips standard)."""
         try:
             if len(self.data) < 6:
-                return getattr(self, '_prev_t_axis', 0) or 0
-            
-            fs = 500.0
+                return 0
+            fs = 80.0
             if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
                 fs = float(self.sampler.sampling_rate)
-            
-            lead_i_raw = np.asarray(self.data[0], dtype=float)
-            lead_ii = np.asarray(self.data[1], dtype=float)
-            lead_avf_raw = np.asarray(self.data[5], dtype=float)
-            
-            # 1. R-peak detection on Lead II
+            lead_i_raw = self.data[0]
+            lead_avf_raw = self.data[5]
+            lead_ii = self.data[1]
             from scipy.signal import butter, filtfilt
             nyquist = fs / 2
-            b, a = butter(4, [0.5/nyquist, 40/nyquist], btype='band')
+            low = 0.5 / nyquist
+            high = 40 / nyquist
+            b, a = butter(4, [low, high], btype='band')
             filtered_ii = filtfilt(b, a, lead_ii)
-            
             signal_mean = np.mean(filtered_ii)
             signal_std = np.std(filtered_ii)
-            r_peaks, _ = find_peaks(
-                filtered_ii, 
-                height=signal_mean + 0.5 * signal_std, 
-                distance=int(0.25 * fs), 
-                prominence=signal_std * 0.4
-            )
-            
-            if len(r_peaks) < 8:
+            r_peaks, _ = find_peaks(filtered_ii, height=signal_mean + 0.5 * signal_std, distance=int(0.3 * fs), prominence=signal_std * 0.4)
+            if len(r_peaks) < 8: # Enforce 8 beats
                 return getattr(self, '_prev_t_axis', 0) or 0
-            
-            # 2. Build Median Beats
             _, median_i = build_median_beat(lead_i_raw, r_peaks, fs, min_beats=8)
-            _, median_ii = build_median_beat(lead_ii, r_peaks, fs, min_beats=8)
             _, median_avf = build_median_beat(lead_avf_raw, r_peaks, fs, min_beats=8)
-            
-            if median_i is None or median_ii is None or median_avf is None:
+            if median_i is None or median_avf is None:
                 return getattr(self, '_prev_t_axis', 0) or 0
-                
             r_peak_idx = len(median_i) // 2
-            
-            # 3. TP Baselines
+            # Get Lead II median beat for axis calculation
+            _, median_ii = build_median_beat(lead_ii, r_peaks, fs, min_beats=8)
+            if median_ii is None:
+                return getattr(self, '_prev_t_axis', 0) or 0
+            # Get TP baselines for Lead I and aVF (REQUIRED for correct axis calculation)
             r_mid = r_peaks[len(r_peaks) // 2]
             prev_r_idx = r_peaks[len(r_peaks) // 2 - 1] if len(r_peaks) > 1 else None
             tp_baseline_i = get_tp_baseline(lead_i_raw, r_mid, fs, prev_r_peak_idx=prev_r_idx)
             tp_baseline_avf = get_tp_baseline(lead_avf_raw, r_mid, fs, prev_r_peak_idx=prev_r_idx)
             
+            # Build time axis for median beat
             time_axis_i, _ = build_median_beat(lead_i_raw, r_peaks, fs, min_beats=8)
+            if time_axis_i is None:
+                return getattr(self, '_prev_t_axis', 0) or 0
             
-            # 4. Axis Calculation (Integral Area Method)
-            axis_deg = calculate_axis_from_median_beat(
-                lead_i_raw, lead_ii, lead_avf_raw, 
-                median_i, median_ii, median_avf, 
-                r_peak_idx, fs, 
-                tp_baseline_i=tp_baseline_i, 
-                tp_baseline_avf=tp_baseline_avf, 
-                time_axis=time_axis_i, 
-                wave_type='T', 
-                prev_axis=getattr(self, '_prev_t_axis', None)
-            )
-            
+            # Calculate T axis using strict wave windows and net area (integral)
+            axis_deg = calculate_axis_from_median_beat(lead_i_raw, lead_ii, lead_avf_raw, median_i, median_ii, median_avf, r_peak_idx, fs, tp_baseline_i=tp_baseline_i, tp_baseline_avf=tp_baseline_avf, time_axis=time_axis_i, wave_type='T', prev_axis=self._prev_t_axis)
             self._prev_t_axis = axis_deg
             return int(round(axis_deg))
         except Exception as e:
-            print(f"❌ Error calculating T axis: {e}")
+            print(f"❌ Error calculating T axis from median: {e}")
             return 0
     
     def calculate_rv5_sv1_from_median(self):
-        """Calculate RV5 and SV1 from median beats (GE/Philips standard).
-        
-        Logic:
-        - RV5: Max positive R in V5 QRS window relative to TP baseline.
-        - SV1: Most negative S nadir in V1 QRS window relative to TP baseline.
-        """
+        """Calculate RV5 and SV1 from median beats (GE/Philips standard)."""
         try:
             if len(self.data) < 8:
                 return None, None
-            
-            fs = 500.0
+            fs = 80.0
             if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
                 fs = float(self.sampler.sampling_rate)
-                
-            # CRITICAL: Correct lead indices for 12-lead ECG
-            # LEADS_MAP: ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
-            # Index 6 = V1, Index 10 = V5
-            lead_v5_raw = np.asarray(self.data[10], dtype=float) if len(self.data) > 10 else None
-            lead_v1_raw = np.asarray(self.data[6], dtype=float) if len(self.data) > 6 else None
-            lead_ii = np.asarray(self.data[1], dtype=float)
-            
+            lead_v5_raw = self.data[6] if len(self.data) > 6 else None
+            lead_v1_raw = self.data[7] if len(self.data) > 7 else None
             if lead_v5_raw is None or lead_v1_raw is None:
                 return None, None
-            
-            # 1. Detect R-peaks on Lead II for alignment
+            lead_ii = self.data[1]
             from scipy.signal import butter, filtfilt
             nyquist = fs / 2
-            b, a = butter(4, [0.5/nyquist, 40/nyquist], btype='band')
+            low = 0.5 / nyquist
+            high = 40 / nyquist
+            b, a = butter(4, [low, high], btype='band')
             filtered_ii = filtfilt(b, a, lead_ii)
-            
             signal_mean = np.mean(filtered_ii)
             signal_std = np.std(filtered_ii)
-            r_peaks, _ = find_peaks(
-                filtered_ii, 
-                height=signal_mean + 0.5 * signal_std, 
-                distance=int(0.25 * fs), 
-                prominence=signal_std * 0.4
-            )
-            
-            if len(r_peaks) < 8:
+            r_peaks, _ = find_peaks(filtered_ii, height=signal_mean + 0.5 * signal_std, distance=int(0.3 * fs), prominence=signal_std * 0.4)
+            if len(r_peaks) < 3:
                 return None, None
-                
-            # 2. Call measurement function using RAW data and shared R-peaks
-            # ADC factors for V5/V1 (Marquette standards)
-            rv5_mv, sv1_mv = measure_rv5_sv1_from_median_beat(
-                lead_v5_raw, lead_v1_raw, 
-                r_peaks, r_peaks, # Use shared R-peaks for alignment
-                fs, 
-                v5_adc_per_mv=2048.0, 
-                v1_adc_per_mv=1441.0
-            )
-            
+            filtered_v5 = filtfilt(b, a, lead_v5_raw)
+            filtered_v1 = filtfilt(b, a, lead_v1_raw)
+            r_peaks_v5, _ = find_peaks(filtered_v5, height=np.mean(filtered_v5) + 0.5 * np.std(filtered_v5), distance=int(0.3 * fs), prominence=np.std(filtered_v5) * 0.4)
+            r_peaks_v1, _ = find_peaks(filtered_v1, height=np.mean(filtered_v1) + 0.5 * np.std(filtered_v1), distance=int(0.3 * fs), prominence=np.std(filtered_v1) * 0.4)
+            if len(r_peaks_v5) < 3 or len(r_peaks_v1) < 3:
+                return None, None
+            rv5_mv, sv1_mv = measure_rv5_sv1_from_median_beat(lead_v5_raw, lead_v1_raw, r_peaks_v5, r_peaks_v1, fs, v5_adc_per_mv=2048.0, v1_adc_per_mv=1441.0)
             return rv5_mv, sv1_mv
         except Exception as e:
             print(f"❌ Error calculating RV5/SV1 from median: {e}")
             return None, None
 
-    def update_ecg_metrics_display(self, heart_rate, pr_interval, qrs_duration, qrs_axis, st_interval, qt_interval=None, qtc_interval=None, qtcf_interval=None):
+    def update_ecg_metrics_display(self, heart_rate, pr_interval, qrs_duration, qrs_axis, st_interval, qt_interval=None, qtc_interval=None):
         """Update the ECG metrics display in the UI (dashboard: BPM, PR, QRS axis, ST, QT/QTc, timer only)"""
         try:
-            # Throttle updates to every 1.0 second to feel responsive but stable
+            # Throttle updates to every 5 seconds to avoid fast flicker
             import time as _time
             if not hasattr(self, '_last_metric_update_ts'):
                 self._last_metric_update_ts = 0.0
-            if _time.time() - self._last_metric_update_ts < 1.0:
+            if _time.time() - self._last_metric_update_ts < 5.0:
                 return
             
             if hasattr(self, 'metric_labels'):
@@ -3263,25 +3190,24 @@ class ECGTestPage(QWidget):
                     if isinstance(st_interval, (int, float)):
                         # Round to 2 decimal places and format
                         st_formatted = round(float(st_interval), 2)
-                        self.metric_labels['st_interval'].setText(f"{st_formatted:.2f}")
+                        self.metric_labels['st_interval'].setText(f"{st_formatted:.2f} mV")
                     else:
-                        self.metric_labels['st_interval'].setText("0.00")
+                        self.metric_labels['st_interval'].setText("0.00 mV")
                 if 'qtc_interval' in self.metric_labels:
-                    # Display only QT/QTc on live pages as requested
-                    display_text = ""
-                    if qt_interval is not None and qt_interval > 0:
-                        display_text += f"{int(round(qt_interval))}"
-                    
-                    if qtc_interval is not None and qtc_interval > 0:
-                        if display_text: display_text += "/"
-                        display_text += f"{int(round(qtc_interval))}"
-                    
-                    # QTcF removed from live page display but kept for reports
-                    
-                    if display_text:
-                        self.metric_labels['qtc_interval'].setText(display_text)
-                    else:
-                        self.metric_labels['qtc_interval'].setText("0")
+                    # Display QT/QTc only
+                    if qt_interval is not None and qtc_interval is not None:
+                        try:
+                            qt_i = int(round(qt_interval))
+                            qtc_i = int(round(qtc_interval))
+                            self.metric_labels['qtc_interval'].setText(f"{qt_i}/{qtc_i}")
+                        except Exception:
+                            self.metric_labels['qtc_interval'].setText(f"{qt_interval}/{qtc_interval}")
+                    elif qtc_interval is not None:
+                        try:
+                            qtc_i = int(round(qtc_interval))
+                            self.metric_labels['qtc_interval'].setText(f"{qtc_i} ")
+                        except Exception:
+                            self.metric_labels['qtc_interval'].setText(f"{qtc_interval} ")
             # mark last update time
             self._last_metric_update_ts = _time.time()
         except Exception as e:
@@ -3315,9 +3241,9 @@ class ECGTestPage(QWidget):
                 if 'qrs_axis' in self.metric_labels:
                     metrics['qrs_axis'] = self.metric_labels['qrs_axis'].text().replace('°', '')
                 if 'st_interval' in self.metric_labels:
-                    metrics['st_interval'] = self.metric_labels['st_interval'].text().strip().replace(' ms', '').replace(' mV', '').replace(' mV mV', '')
+                    metrics['st_interval'] = self.metric_labels['st_interval'].text().replace(' ms', '')
                 if 'qtc_interval' in self.metric_labels:
-                    metrics['qtc_interval'] = self.metric_labels['qtc_interval'].text().strip().replace(' ms', '')
+                    metrics['qtc_interval'] = self.metric_labels['qtc_interval'].text().replace(' ms', '')
                 if 'time_elapsed' in self.metric_labels:
                     metrics['time_elapsed'] = self.metric_labels['time_elapsed'].text()
             
@@ -3327,12 +3253,12 @@ class ECGTestPage(QWidget):
             else:
                 metrics['sampling_rate'] = "--"
             
-            # Reduced debug output - only print every 1000 calls to avoid console spam
+            # Reduced debug output - only print every 100 calls to avoid console spam
             if not hasattr(self, '_metrics_call_count'):
                 self._metrics_call_count = 0
             self._metrics_call_count += 1
-            # if self._metrics_call_count % 1000 == 0:
-            #     print(f"🔍 get_current_metrics returning: {metrics}")
+            if self._metrics_call_count % 100 == 0:
+                print(f"🔍 get_current_metrics returning: {metrics}")
             return metrics
         except Exception as e:
             print(f"Error getting current metrics: {e}")
@@ -3803,18 +3729,13 @@ class ECGTestPage(QWidget):
             data = np.array(lead_ii_data)
             
             # Detect R peaks using Pan-Tompkins algorithm
-            # Use detected sampling rate
-            fs_report = 186.5
-            if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate > 10:
-                fs_report = float(self.sampler.sampling_rate)
-            
-            r_peaks = pan_tompkins(data, fs=fs_report)
+            r_peaks = pan_tompkins(data, fs=500)  # 500Hz sampling rate
             
             if len(r_peaks) < 2:
                 return {}
             
             # Calculate heart rate
-            rr_intervals = np.diff(r_peaks) / fs_report  # Convert to seconds
+            rr_intervals = np.diff(r_peaks) / 500.0  # Convert to seconds
             mean_rr = np.mean(rr_intervals)
             heart_rate = 60 / mean_rr if mean_rr > 0 else 0
             
@@ -5653,46 +5574,37 @@ class ECGTestPage(QWidget):
                 return int(m.group(0)) if m else default_val
 
             if dashboard_ref and hasattr(dashboard_ref, 'metric_labels'):
-                # Try to use last calculated clinical values for better accuracy in reports
-                hr = getattr(self, 'last_heart_rate', 0)
-                pr = getattr(self, 'pr_interval', 0)
-                qrs = getattr(self, 'last_qrs_duration', 0)
-                qt = getattr(self, 'last_qt_interval', 0)
-                qtc = getattr(self, 'last_qtc_interval', 0)
-                qtcf = getattr(self, 'last_qtcf_interval', 0)
-                st = getattr(self, 'last_st_segment', 0.0)
-                axis = getattr(self, 'last_qrs_axis', "--")
-
-                # If clinical values not available, try to extract from UI labels
-                if hr == 0:
-                    ml = dashboard_ref.metric_labels
-                    try:
-                        hr = _num_from_label(ml.get('heart_rate', QLabel('')).text() if ml.get('heart_rate') else '', 0)
-                    except Exception: hr = 0
-                    try:
-                        pr = _num_from_label(ml.get('pr_interval', QLabel('')).text() if ml.get('pr_interval') else '', 0)
-                    except Exception: pr = 0
-                    try:
-                        qrs = _num_from_label(ml.get('qrs_duration', QLabel('')).text() if ml.get('qrs_duration') else '', 0)
-                    except Exception: qrs = 0
-                    try:
-                        qtc_text = ml.get('qtc_interval', QLabel('')).text() if ml.get('qtc_interval') else ''
-                        qtc = _num_from_label(qtc_text.split('/')[1] if '/' in qtc_text else qtc_text, 0)
-                    except Exception: qtc = 0
-                    try:
-                        st = _num_from_label(ml.get('st_interval', QLabel('')).text() if ml.get('st_interval') else '', 0)
-                    except Exception: st = 0
+                ml = dashboard_ref.metric_labels
+                try:
+                    hr = _num_from_label(ml.get('heart_rate', QLabel('')).text() if ml.get('heart_rate') else '', 0)
+                except Exception:
+                    hr = 0
+                try:
+                    pr = _num_from_label(ml.get('pr_interval', QLabel('')).text() if ml.get('pr_interval') else '', 0)
+                except Exception:
+                    pr = 0
+                try:
+                    qrs = _num_from_label(ml.get('qrs_duration', QLabel('')).text() if ml.get('qrs_duration') else '', 0)
+                except Exception:
+                    qrs = 0
+                try:
+                    qtc = _num_from_label(ml.get('qtc_interval', QLabel('')).text() if ml.get('qtc_interval') else '', 0)
+                except Exception:
+                    qtc = 0
+                try:
+                    st = _num_from_label(ml.get('st_interval', QLabel('')).text() if ml.get('st_interval') else '', 0)
+                except Exception:
+                    st = 0
 
                 ecg_data.update({
                     "beat": hr,
                     "HR_avg": hr,
                     "PR": pr,
                     "QRS": qrs,
-                    "QT": qt if qt > 0 else (0 if qtc == 0 else int(max(0, qtc - 20))),
+                    # If QTc is zero (no data), QT must be zero as well
+                    "QT": 0 if qtc == 0 else int(max(0, qtc - 20)),
                     "QTc": qtc,
-                    "QTc_Fridericia": qtcf,
                     "ST": st,
-                    "QRS_axis": axis,
                 })
 
             # Load patient details from centralized all_patients.json database
@@ -6153,12 +6065,8 @@ class ECGTestPage(QWidget):
             seconds_scale = (25.0 / max(1e-6, wave_speed))
             seconds_to_show = baseline_seconds * seconds_scale
             
-            # Use hardware sampling rate
-            sampling_rate = 186.5
-            if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate > 10:
-                sampling_rate = float(self.sampler.sampling_rate)
-            elif hasattr(self, 'sampling_rate') and self.sampling_rate > 10:
-                sampling_rate = float(self.sampling_rate)
+            # Use hardware sampling rate (80 Hz)
+            sampling_rate = 500.0
             samples_to_show = int(sampling_rate * seconds_to_show)
             
             # Return the calculated samples (same as main plots - no buffer size limit)
@@ -6224,12 +6132,12 @@ class ECGTestPage(QWidget):
                     # Optional AC notch filtering (match main 12-lead grid view)
                     filtered_segment = np.array(data_segment, dtype=float)
                     try:
-                        # Prefer hardware sampling rate; fall back to 186.5 Hz
-                        sampling_rate = 186.5
+                        # Prefer hardware sampling rate; fall back to stored sampling_rate or 500 Hz
+                        sampling_rate = 500.0
                         try:
-                            if hasattr(self, "sampler") and hasattr(self.sampler, "sampling_rate") and self.sampler.sampling_rate > 10:
+                            if hasattr(self, "sampler") and hasattr(self.sampler, "sampling_rate") and self.sampler.sampling_rate:
                                 sampling_rate = float(self.sampler.sampling_rate)
-                            elif hasattr(self, "sampling_rate") and self.sampling_rate > 10:
+                            elif hasattr(self, "sampling_rate") and self.sampling_rate:
                                 sampling_rate = float(self.sampling_rate)
                         except Exception:
                             pass
@@ -6917,12 +6825,12 @@ class ECGTestPage(QWidget):
                     # Optional AC notch filtering (match main 12-lead grid view)
                     filtered_segment = np.array(data_segment, dtype=float)
                     try:
-                        sampling_rate = 186.5
+                        sampling_rate = 500.0
                         try:
-                            if hasattr(self, "sampler") and hasattr(self.sampler, "sampling_rate") and self.sampler.sampling_rate > 10:
+                            if hasattr(self, "sampler") and hasattr(self.sampler, "sampling_rate") and self.sampler.sampling_rate:
                                 sampling_rate = float(self.sampler.sampling_rate)
-                            elif hasattr(self, "sampling_rate") and self.sampling_rate > 10:
-                                sampling_rate = float(self.sampler.sampling_rate)
+                            elif hasattr(self, "sampling_rate") and self.sampling_rate:
+                                sampling_rate = float(self.sampling_rate)
                         except Exception:
                             pass
                         
@@ -7252,11 +7160,7 @@ class ECGTestPage(QWidget):
                             scaled_data = self.apply_adaptive_gain(self.data[i], signal_source, gain_factor)
 
                             # Build time axis and apply wave-speed scaling
-                            sampling_rate = 186.5
-                            if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate > 10:
-                                sampling_rate = float(self.sampler.sampling_rate)
-                            elif hasattr(self, 'sampling_rate') and self.sampling_rate > 10:
-                                sampling_rate = float(self.sampling_rate)
+                            sampling_rate = 500.0  # Hardware sampling rate
                             
                             # Calculate how many samples to show based on wave speed
                             # 25 mm/s → 10s window

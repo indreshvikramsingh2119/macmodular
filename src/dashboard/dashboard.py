@@ -1559,14 +1559,17 @@ class Dashboard(QWidget):
                 return {}
             
             # CRITICAL: Get actual sampling rate from ECG test page
-            fs = 186.5  # Base fallback based on hardware
+            # Use same fallback as ECG test page (250 Hz) for consistency
+            fs = 250.0  # Base fallback (matches ECG test page)
             if sampling_rate and sampling_rate > 10:
                 fs = float(sampling_rate)
             elif hasattr(self, 'ecg_test_page') and self.ecg_test_page:
                 try:
-                    if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'sampler') and hasattr(self.ecg_test_page.sampler, 'sampling_rate'):
+                    if hasattr(self.ecg_test_page, 'sampler') and hasattr(self.ecg_test_page.sampler, 'sampling_rate'):
                         if self.ecg_test_page.sampler.sampling_rate > 10:
                             fs = float(self.ecg_test_page.sampler.sampling_rate)
+                    elif hasattr(self.ecg_test_page, 'sampling_rate') and self.ecg_test_page.sampling_rate > 10:
+                        fs = float(self.ecg_test_page.sampling_rate)
                 except Exception as e:
                     pass
             
@@ -1659,14 +1662,15 @@ class Dashboard(QWidget):
                 # CRITICAL: Use correct sampling rate (fs) for accurate BPM calculation
                 rr_intervals_ms = np.diff(peaks) * (1000.0 / fs)
                 
-                # Filter physiologically reasonable intervals (120-6000 ms)
-                # 120 ms ≈ 500 BPM, 6000 ms = 10 BPM
-                min_rr_ms = 120
+                # Filter physiologically reasonable intervals (200-6000 ms)
+                # 200 ms = 300 BPM (max), 6000 ms = 10 BPM (min)
+                # Changed from 120 to 200 to match ECG test page and reduce noise
+                min_rr_ms = 200
                 max_rr_ms = 6000
                 valid_intervals = rr_intervals_ms[(rr_intervals_ms >= min_rr_ms) & (rr_intervals_ms <= max_rr_ms)]
                 
                 if len(valid_intervals) > 0:
-                    # Calculate heart rate from median R-R interval
+                    # Calculate heart rate from median R-R interval (more stable than instantaneous)
                     median_rr = np.median(valid_intervals)
                     heart_rate = 60000 / median_rr  # Convert to BPM
                     
@@ -1674,24 +1678,26 @@ class Dashboard(QWidget):
                     heart_rate = max(10, min(300, heart_rate))
                     hr_int = int(round(heart_rate))
                     
-                    # ANTI-FLICKERING: Smooth over last 3 readings for faster response in EXE
-                    # Reduced from 5 to 3 for quicker BPM control (5-7 sec target)
+                    # ANTI-FLICKERING: Smooth over last 5 readings for stability
+                    # Increased from 3 to 5 for better stability (matches ECG test page)
                     if not hasattr(self, '_dashboard_bpm_buffer'):
                         self._dashboard_bpm_buffer = []
                     
                     self._dashboard_bpm_buffer.append(hr_int)
-                    if len(self._dashboard_bpm_buffer) > 3:
+                    if len(self._dashboard_bpm_buffer) > 5:
                         self._dashboard_bpm_buffer.pop(0)
                     
-                    # Use median for stability
+                    # Use median for stability (ignores outliers)
                     smoothed_bpm = int(np.median(self._dashboard_bpm_buffer))
-                    metrics['heart_rate'] = smoothed_bpm
-                    # Use the most recent valid RR interval for instantaneous BPM
-                    last_rr = float(valid_intervals[-1])
-                    heart_rate = 60000.0 / last_rr  # Instantaneous BPM from last beat
-                    # Clamp to physiologic range (10–300 bpm)
-                    heart_rate = max(10.0, min(300.0, heart_rate))
-                    metrics['heart_rate'] = int(round(heart_rate))
+                    
+                    # HYSTERESIS: Only update if change is ≥2 BPM to prevent flickering
+                    if not hasattr(self, '_last_stable_dashboard_bpm'):
+                        self._last_stable_dashboard_bpm = smoothed_bpm
+                    
+                    if abs(smoothed_bpm - self._last_stable_dashboard_bpm) >= 2:
+                        self._last_stable_dashboard_bpm = smoothed_bpm
+                    
+                    metrics['heart_rate'] = self._last_stable_dashboard_bpm
                 else:
                     metrics['heart_rate'] = 0
             else:
@@ -1793,11 +1799,46 @@ class Dashboard(QWidget):
             else:
                 metrics['st_interval'] = 100  # Fallback
             
-            # Calculate QTc (Corrected QT interval) - Set same as ST interval
-            if 'st_interval' in metrics:
-                metrics['qtc_interval'] = metrics['st_interval']  # Same value as ST
+            # Calculate QT and Corrected QT (QTc/QTcF) - LIVE
+            if len(peaks) > 0:
+                qt_intervals = []
+                for r_peak in peaks[:min(5, len(peaks))]:
+                    # Find Q point (min before R)
+                    q_start = max(0, r_peak - int(0.04 * fs))
+                    q_point = q_start + np.argmin(filtered_signal[q_start:r_peak+1]) if r_peak > q_start else r_peak
+                    
+                    # Find T wave end (return to baseline)
+                    t_search_start = r_peak + int(0.08 * fs)
+                    t_search_end = min(len(filtered_signal), r_peak + int(0.45 * fs))
+                    if t_search_end > t_search_start:
+                        t_segment = filtered_signal[t_search_start:t_search_end]
+                        baseline = np.mean(filtered_signal[max(0, r_peak-int(0.2*fs)):r_peak-int(0.05*fs)])
+                        t_peak_idx = t_search_start + np.argmax(np.abs(t_segment - baseline))
+                        
+                        # Find return to baseline after T peak
+                        post_t = filtered_signal[t_peak_idx:t_search_end]
+                        t_end_candidates = np.where(np.abs(post_t - baseline) < 0.1 * np.std(filtered_signal))[0]
+                        if len(t_end_candidates) > 0:
+                            t_end = t_peak_idx + t_end_candidates[0]
+                            qt_ms = (t_end - q_point) / fs * 1000.0
+                            if 200 <= qt_ms <= 600:
+                                qt_intervals.append(qt_ms)
+                
+                if qt_intervals:
+                    qt_avg = np.mean(qt_intervals)
+                    # Use current HR for QTc
+                    hr_for_qtc = metrics.get('heart_rate', 60)
+                    rr_sec = 60.0 / max(1, hr_for_qtc)
+                    
+                    qtc_bazett = qt_avg / np.sqrt(rr_sec)
+                    # QTcF calculated but not shown on live pages anymore
+                    qtcf_frid = qt_avg / (rr_sec ** (1/3))
+                    
+                    metrics['qtc_interval'] = f"{int(round(qt_avg))}/{int(round(qtc_bazett))}"
+                else:
+                    metrics['qtc_interval'] = "0"
             else:
-                metrics['qtc_interval'] = 0  # Fallback
+                metrics['qtc_interval'] = "0"
             
             # metrics['sampling_rate'] = f"{sampling_rate} Hz"  # Commented out
             
@@ -1854,16 +1895,15 @@ class Dashboard(QWidget):
             
             # Update ST Interval
             if 'st_interval' in ecg_metrics:
-                self.metric_labels['st_interval'].setText(f"{ecg_metrics['st_interval']} mV")
+                self.metric_labels['st_interval'].setText(f"{ecg_metrics['st_interval']}")
             
             # Update QTc Interval (handles both single value and QT/QTc format)
             if 'qtc_interval' in ecg_metrics:
-                qtc_text = ecg_metrics['qtc_interval']
-                # If already formatted as QT/QTc, don't add " ms" suffix
-                if '/' in str(qtc_text):
-                    self.metric_labels['qtc_interval'].setText(str(qtc_text))
-                else:
-                    self.metric_labels['qtc_interval'].setText(f"{qtc_text} ms")
+                qtc_text = str(ecg_metrics['qtc_interval'])
+                # Remove " ms" suffix if present
+                if qtc_text.endswith(" ms"):
+                    qtc_text = qtc_text[:-3]
+                self.metric_labels['qtc_interval'].setText(qtc_text)
             
             # Update Sampling Rate - Commented out
             # if 'sampling_rate' in ecg_metrics:
@@ -2622,16 +2662,29 @@ class Dashboard(QWidget):
                 print("🔬 Calculating wave amplitudes for report...")
                 if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
                     try:
+                        # PRIORITY: Use standardized RV5/SV1 calculation (median beat method)
+                        if hasattr(self.ecg_test_page, 'calculate_rv5_sv1_from_median'):
+                            rv5_calc, sv1_calc = self.ecg_test_page.calculate_rv5_sv1_from_median()
+                            if rv5_calc is not None and rv5_calc > 0:
+                                ecg_data['rv5'] = float(rv5_calc)
+                            if sv1_calc is not None and sv1_calc != 0.0:
+                                ecg_data['sv1'] = float(sv1_calc)
+                            print(f"🔬 Using standardized RV5/SV1: RV5={ecg_data.get('rv5', 0):.3f}, SV1={ecg_data.get('sv1', 0):.3f}")
+                        
+                        # Get other wave amplitudes (P, QRS, T) from calculate_wave_amplitudes
                         print(f"🔬 ECG test page found, calling calculate_wave_amplitudes()...")
                         wave_amps = self.ecg_test_page.calculate_wave_amplitudes()
                         print(f"🔬 Raw wave_amps returned: {wave_amps}")
                         
-                        # Add wave amplitudes to ecg_data
+                        # Add wave amplitudes to ecg_data (only if not already set from standardized function)
                         ecg_data['p_amp'] = wave_amps.get('p_amp', 0.0)
                         ecg_data['qrs_amp'] = wave_amps.get('qrs_amp', 0.0)
                         ecg_data['t_amp'] = wave_amps.get('t_amp', 0.0)
-                        ecg_data['rv5'] = wave_amps.get('rv5', 0.0)
-                        ecg_data['sv1'] = wave_amps.get('sv1', 0.0)
+                        # Only use calculate_wave_amplitudes RV5/SV1 if standardized function didn't provide values
+                        if 'rv5' not in ecg_data or ecg_data['rv5'] <= 0:
+                            ecg_data['rv5'] = wave_amps.get('rv5', 0.0)
+                        if 'sv1' not in ecg_data or ecg_data['sv1'] == 0.0:
+                            ecg_data['sv1'] = wave_amps.get('sv1', 0.0)
                         
                         print(f"📊 Wave amplitudes added to ecg_data:")
                         print(f"   P={ecg_data['p_amp']:.4f}, QRS={ecg_data['qrs_amp']:.4f}, T={ecg_data['t_amp']:.4f}")
@@ -2653,6 +2706,31 @@ class Dashboard(QWidget):
                     ecg_data['t_amp'] = 0.0
                     ecg_data['rv5'] = 0.0
                     ecg_data['sv1'] = 0.0
+                
+                # Add axis values from ECG test page (standardized median beat method)
+                if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
+                    try:
+                        # Get P axis
+                        if hasattr(self.ecg_test_page, 'calculate_p_axis_from_median'):
+                            p_axis = self.ecg_test_page.calculate_p_axis_from_median()
+                            if p_axis is not None and p_axis != 0:
+                                ecg_data['p_axis'] = int(round(p_axis))
+                        
+                        # Get QRS axis (also check if already in ecg_data from metrics)
+                        if hasattr(self.ecg_test_page, 'calculate_qrs_axis_from_median'):
+                            qrs_axis = self.ecg_test_page.calculate_qrs_axis_from_median()
+                            if qrs_axis is not None and qrs_axis != 0:
+                                ecg_data['QRS_axis'] = f"{int(round(qrs_axis))}°"
+                        
+                        # Get T axis
+                        if hasattr(self.ecg_test_page, 'calculate_t_axis_from_median'):
+                            t_axis = self.ecg_test_page.calculate_t_axis_from_median()
+                            if t_axis is not None and t_axis != 0:
+                                ecg_data['t_axis'] = int(round(t_axis))
+                        
+                        print(f"🔬 Added axis values to ecg_data: P={ecg_data.get('p_axis', '--')}, QRS={ecg_data.get('QRS_axis', '--')}, T={ecg_data.get('t_axis', '--')}")
+                    except Exception as e:
+                        print(f"⚠️ Error getting axis values from ECG test page: {e}")
                 
                 # Add user details to ecg_data for JSON export
                 ecg_data['user'] = {

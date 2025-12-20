@@ -1363,8 +1363,8 @@ def generate_ecg_report(
     def _fmt_mv(value):
         try:
             vf = _safe_float(value)
-            if vf and vf != 0:
-                return f"{vf:.2f} mV"
+            if vf is not None:
+                return f"{int(round(vf))}"
         except Exception:
             pass
         return "--"
@@ -1380,6 +1380,16 @@ def generate_ecg_report(
             return f"{value}°" if not str(value).endswith("°") else str(value)
         return "--"
 
+    def _fmt_qtcf(value):
+        try:
+            vf = _safe_float(value)
+            if vf and vf > 0:
+                sec = vf / 1000.0
+                return f"{sec:.3f} s"
+        except Exception:
+            pass
+        return "--"
+
     obs_data = [
         ["Heart Rate", _fmt_bpm(data.get('beat')), "60-100"],                    
         ["PR Interval", _fmt_ms(data.get('PR')), "120 ms - 200 ms"],            
@@ -1387,8 +1397,8 @@ def generate_ecg_report(
         ["QRS Axis", _fmt_deg(data.get('QRS_axis') or data.get('Axis')), "Normal"],         
         ["QT Interval", _fmt_ms(data.get('QT')), "300 ms - 450 ms"],            
         ["QTCB (Bazett)", _fmt_ms(data.get('QTc')), "300 ms - 450 ms"],          
-        ["QTCF (Fridericia)", _fmt_ms(data.get('QTc_Fridericia')), "300 ms - 450 ms"],          
-        ["ST Deviation (J+60 ms)", _fmt_mv(data.get('ST')), "Report in mV"],            
+        ["QTCF (Fridericia)", _fmt_qtcf(data.get('QTc_Fridericia')), "300 ms - 450 ms"],          
+        ["ST Deviation (J+60 ms)", _fmt_mv(data.get('ST')), "Normal"],            
     ]
     
     # Add headers to data
@@ -1530,16 +1540,17 @@ def generate_ecg_report(
     QRS = data.get('QRS', 93)
     QT = data.get('QT', 354)
     QTc = data.get('QTc', 260)
+    QTcF = data.get('QTc_Fridericia') or data.get('QTcF') or 0
     ST = data.get('ST', 114)
     # DYNAMIC RR interval calculation from heart rate (instead of hard-coded 857)
     RR = int(60000 / HR) if HR and HR > 0 else 0  # RR interval in ms from heart rate
 
-    # Create table data: 2 rows × 2 columns (as per your changes)
+    # Create table data: 4 rows × 2 columns
     vital_table_data = [
         [f"HR : {_fmt_bpm(HR)}", f"QT: {_fmt_ms(QT)}"],
         [f"PR : {_fmt_ms(PR)}", f"QTc: {_fmt_ms(QTc)}"],
-        [f"QRS: {_fmt_ms(QRS)}", f"ST Deviation (J+60 ms): {_fmt_mv(ST)}"],
-        [f"RR : {_fmt_ms(RR)}", ""]  
+        [f"QRS: {_fmt_ms(QRS)}", f"ST Deviation: {_fmt_mv(ST)}"],
+        [f"RR : {_fmt_ms(RR)}", f"QTcF: {int(round(QTcF/1000.0*1000))/1000.0:.3f} s"]  
     ]
 
     # Create vital parameters table with MORE LEFT and TOP positioning
@@ -1718,10 +1729,10 @@ def generate_ecg_report(
 
     # Create table data: 2 rows × 2 columns (as per your changes)
     vital_table_data = [
-        [f"HR : {HR} bpm", f"QT: {QT} ms"],
-        [f"PR : {PR} ms", f"QTc: {QTc} ms"],
-        [f"QRS: {QRS} ms", f"ST: {ST} ms"],
-        [f"RR : {RR} ms", ""]  
+        [f"HR : {int(round(HR))} bpm", f"QT: {int(round(QT))} ms"],
+        [f"PR : {int(round(PR))} ms", f"QTc: {int(round(QTc))} ms"],
+        [f"QRS: {int(round(QRS))} ms", f"ST: {int(round(ST))} ms"],
+        [f"RR : {int(round(RR))} ms", ""]  
     ]
 
     # Create vital parameters table with MORE LEFT and TOP positioning
@@ -2210,10 +2221,10 @@ def generate_ecg_report(
 
     # Create table data: 2 rows × 2 columns (as per your changes)
     vital_table_data = [
-        [f"HR : {HR} bpm", f"QT: {QT} ms"],
-        [f"PR : {PR} ms", f"QTc: {QTc} ms"],
-        [f"QRS: {QRS} ms", f"ST: {ST} ms"],
-        [f"RR : {RR} ms", ""]  
+        [f"HR : {int(round(HR))} bpm", f"QT: {int(round(QT))} ms"],
+        [f"PR : {int(round(PR))} ms", f"QTc: {int(round(QTc))} ms"],
+        [f"QRS: {int(round(QRS))} ms", f"ST: {int(round(ST))} ms"],
+        [f"RR : {int(round(RR))} ms", ""]  
     ]
 
     # Create vital parameters table with MORE LEFT and TOP positioning
@@ -2710,15 +2721,15 @@ def generate_ecg_report(
                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rr_label)
 
-    qt_label = String(130, 664, f"QT    : {QT} ms",  
+    qt_label = String(130, 664, f"QT    : {int(round(QT))} ms",  
                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qt_label)
 
-    qtc_label = String(130, 646, f"QTc  : {QTc} ms",  
+    qtc_label = String(130, 646, f"QTc  : {int(round(QTc))} ms",  
                       fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtc_label)
     # SECOND COLUMN (Right side - x=240)
-    st_label = String(240, 664, f"ST            : {ST} ms",  
+    st_label = String(240, 664, f"ST            : {int(round(ST))} ms",  
                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(st_label)
 
@@ -2791,11 +2802,52 @@ def generate_ecg_report(
             print(f"⚠️ Fallback amplitude computation failed: {e}")
 
     # Calculate P/QRS/T Axis in degrees (using Lead I and Lead aVF)
+    # PRIORITY 1: Use standardized values from data dictionary (passed from dashboard)
     p_axis_deg = "--"
     qrs_axis_deg = "--"
     t_axis_deg = "--"
     
-    if ecg_test_page is not None and hasattr(ecg_test_page, 'data') and len(ecg_test_page.data) > 5:
+    if data is not None:
+        if 'p_axis' in data and data['p_axis'] is not None:
+            p_axis_deg = f"{int(round(data['p_axis']))}°"
+            print(f"🔬 Using P axis from data: {p_axis_deg}")
+        if 'QRS_axis' in data and data['QRS_axis'] is not None:
+            qrs_axis_deg = str(data['QRS_axis']).replace('°', '') + '°' if '°' not in str(data['QRS_axis']) else str(data['QRS_axis'])
+            print(f"🔬 Using QRS axis from data: {qrs_axis_deg}")
+        if 't_axis' in data and data['t_axis'] is not None:
+            t_axis_deg = f"{int(round(data['t_axis']))}°"
+            print(f"🔬 Using T axis from data: {t_axis_deg}")
+    
+    # PRIORITY 2: Try to get axis values from ECG test page (standardized median beat method)
+    if (p_axis_deg == "--" or qrs_axis_deg == "--" or t_axis_deg == "--") and ecg_test_page is not None:
+        try:
+            # Get P axis from standardized calculation
+            if p_axis_deg == "--" and hasattr(ecg_test_page, 'calculate_p_axis_from_median'):
+                p_axis_calc = ecg_test_page.calculate_p_axis_from_median()
+                if p_axis_calc is not None and p_axis_calc != 0:
+                    p_axis_deg = f"{int(round(p_axis_calc))}°"
+                    print(f"🔬 Using standardized P axis from ECG test page: {p_axis_deg}")
+            
+            # Get QRS axis from standardized calculation
+            if qrs_axis_deg == "--" and hasattr(ecg_test_page, 'calculate_qrs_axis_from_median'):
+                qrs_axis_calc = ecg_test_page.calculate_qrs_axis_from_median()
+                if qrs_axis_calc is not None and qrs_axis_calc != 0:
+                    qrs_axis_deg = f"{int(round(qrs_axis_calc))}°"
+                    print(f"🔬 Using standardized QRS axis from ECG test page: {qrs_axis_deg}")
+            
+            # Get T axis from standardized calculation
+            if t_axis_deg == "--" and hasattr(ecg_test_page, 'calculate_t_axis_from_median'):
+                t_axis_calc = ecg_test_page.calculate_t_axis_from_median()
+                if t_axis_calc is not None and t_axis_calc != 0:
+                    t_axis_deg = f"{int(round(t_axis_calc))}°"
+                    print(f"🔬 Using standardized T axis from ECG test page: {t_axis_deg}")
+        except Exception as e:
+            print(f"⚠️ Error getting axis values from ECG test page: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Fallback: Recalculate if not available from ECG test page
+    if (p_axis_deg == "--" or qrs_axis_deg == "--" or t_axis_deg == "--") and ecg_test_page is not None and hasattr(ecg_test_page, 'data') and len(ecg_test_page.data) > 5:
         try:
             from scipy.signal import butter, filtfilt, find_peaks
             
@@ -2866,9 +2918,15 @@ def generate_ecg_report(
                                 return "--"
                             axis_rad = np.arctan2(mean_aVF, mean_I)
                             axis_deg = np.degrees(axis_rad)
-                            if axis_deg < 0:
+                            
+                            # Normalize to -180 to +180 (clinical standard, matches standardized function)
+                            # This ensures consistency with calculate_axis_from_median_beat()
+                            if axis_deg > 180:
+                                axis_deg -= 360
+                            if axis_deg < -180:
                                 axis_deg += 360
-                            return f"{int(axis_deg)}°"
+                            
+                            return f"{int(round(axis_deg))}°"
                         
                         # Detect P peaks (adaptive window based on HR)
                         # Calculate HR from R-peaks for adaptive detection
@@ -3127,8 +3185,25 @@ def generate_ecg_report(
     master_drawing.add(p_qrs_label)
 
     # Get RV5 and SV1 amplitudes
+    # PRIORITY: Use standardized values from ECG test page if available
     rv5_amp = _safe_float(data.get('rv5'), 0.0)
     sv1_amp = _safe_float(data.get('sv1'), 0.0)
+    
+    # Try to get from ECG test page's standardized calculation
+    if ecg_test_page is not None:
+        try:
+            if hasattr(ecg_test_page, 'calculate_rv5_sv1_from_median'):
+                rv5_calc, sv1_calc = ecg_test_page.calculate_rv5_sv1_from_median()
+                if rv5_calc is not None and rv5_calc > 0:
+                    rv5_amp = float(rv5_calc)
+                    print(f"🔬 Using standardized RV5 from ECG test page: {rv5_amp:.3f} mV")
+                if sv1_calc is not None and sv1_calc != 0.0:
+                    sv1_amp = float(sv1_calc)
+                    print(f"🔬 Using standardized SV1 from ECG test page: {sv1_amp:.3f} mV")
+        except Exception as e:
+            print(f"⚠️ Error getting RV5/SV1 from ECG test page: {e}")
+            import traceback
+            traceback.print_exc()
     
     print(f"🔬 Report Generator - Received RV5/SV1 from data:")
     print(f"   rv5: {rv5_amp}, sv1: {sv1_amp}")
@@ -3177,10 +3252,10 @@ def generate_ecg_report(
                             tp_baseline = np.median(np.asarray(v5_raw[max(0,qs-int(0.05*fs)):qs]))
                         
                         # RV5 = max(QRS) - TP_baseline (positive, in mV)
-                        # Convert from ADC counts to mV: V5 uses 7586 multiplier, 10mm/mV → 1 mV = 1517.2 ADC
+                        # Use standardized calibration factor: 2048.0 ADC per mV (matches clinical_measurements.py)
                         r_amp_adc = np.max(qrs_segment) - tp_baseline
                         if r_amp_adc > 0:
-                            r_amp_mv = r_amp_adc / 1517.2  # Convert ADC to mV
+                            r_amp_mv = r_amp_adc / 2048.0  # Standardized ADC to mV conversion for V5
                             vals.append(r_amp_mv)
                 if len(vals)>0 and rv5_amp<=0: 
                     rv5_amp = float(np.median(vals))  # Median beat approach
@@ -3213,10 +3288,10 @@ def generate_ecg_report(
                             tp_baseline = np.median(np.asarray(v1_raw[max(0, ss-int(0.05*fs)):ss]))
                         
                         # SV1 = min(QRS) - TP_baseline (negative, preserve sign, in mV)
-                        # Convert from ADC counts to mV: V1 uses 5500 multiplier, 10mm/mV → 1 mV = 1100 ADC
+                        # Use standardized calibration factor: 1441.0 ADC per mV (matches clinical_measurements.py)
                         s_amp_adc = np.min(qrs_segment) - tp_baseline
                         if s_amp_adc < 0:  # SV1 must be negative
-                            s_amp_mv = s_amp_adc / 1100.0  # Convert ADC to mV (preserve sign)
+                            s_amp_mv = s_amp_adc / 1441.0  # Standardized ADC to mV conversion for V1 (preserve sign)
                             vals.append(s_amp_mv)
                 if len(vals)>0 and sv1_amp==0.0:
                     sv1_amp = float(np.median(vals))  # Median beat approach, negative value
@@ -3235,15 +3310,18 @@ def generate_ecg_report(
     
     # SECOND COLUMN - RV5/SV1 (ABOVE ECG GRAPH - shifted further up)
     # Display SV1 as negative mV (GE/Hospital standard)
+    # Use 3 decimal places for precision (not rounded to integers)
     rv5_sv_label = String(240, 720, f"RV5/SV1  : {rv5_mv:.3f} mV/{sv1_mv:.3f} mV",  # SV1 will show as negative
-                          fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                         fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv_label)
 
     # Calculate RV5+SV1 = RV5 + abs(SV1) (GE/Philips standard)
+    # CRITICAL: Calculate from unrounded values to avoid rounding errors
     # SV1 is negative, so RV5+SV1 = RV5 + abs(SV1) for Sokolow-Lyon index
     rv5_sv1_sum = rv5_mv + abs(sv1_mv)  # RV5 + abs(SV1) as per GE/Philips standard
     
     # SECOND COLUMN - RV5+SV1 (ABOVE ECG GRAPH - shifted further up)
+    # Use 3 decimal places for precision
     rv5_sv1_sum_label = String(240, 700, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV",  # Moved up from 660 to 670
                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv1_sum_label)
